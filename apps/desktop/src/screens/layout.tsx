@@ -4,7 +4,10 @@ import { Button } from "@github-client/ui/components/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@github-client/ui/components/dropdown-menu"
 import { Kbd } from "@github-client/ui/components/kbd"
@@ -15,6 +18,7 @@ import {
   BuildingIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  DownloadIcon,
   InboxIcon,
   MenuIcon,
   SearchIcon,
@@ -26,7 +30,9 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useClient, useJobStatus, useSession } from "@/app/client"
 import { useShortcuts } from "@/app/shortcuts"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
+import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
+import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
 const GROUP_ICONS = { me: UserIcon, org: BuildingIcon, team: UsersIcon, starred: StarIcon }
@@ -45,6 +51,11 @@ export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const lastPathname = useRef(pathname)
+  const [version, setVersion] = useState<string>()
+
+  useEffect(() => {
+    void appVersion().then(setVersion)
+  }, [])
 
   useEffect(() => {
     if (lastPathname.current !== pathname) {
@@ -115,6 +126,17 @@ export function Layout() {
               <span className="truncate">{viewer.login}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
+              {isDesktop && (
+                <>
+                  <DropdownMenuGroup>
+                    {version && <DropdownMenuLabel>GitHub-client {version}</DropdownMenuLabel>}
+                    <DropdownMenuItem onClick={() => void checkForUpdates({ manual: true })}>
+                      Check for updates
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem
                 onClick={async () => {
                   localStorage.setItem(SIGNED_OUT_KEY, "1")
@@ -128,6 +150,7 @@ export function Layout() {
             </DropdownMenuContent>
           </DropdownMenu>
           <SyncIndicator />
+          <UpdateButton />
         </footer>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -246,6 +269,27 @@ function GroupNavNode({
         </div>
       )}
     </div>
+  )
+}
+
+/** Shows when a newer version is available; installs it and restarts. */
+function UpdateButton() {
+  const update = useUpdateState()
+  if (update.status !== "available" && update.status !== "installing") return null
+  const installing = update.status === "installing"
+  const progress =
+    installing && update.progress !== undefined ? ` ${Math.round(update.progress * 100)}%` : ""
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      disabled={installing}
+      title={`Install version ${update.version} and restart`}
+      onClick={() => void installUpdate()}
+    >
+      <DownloadIcon />
+      {installing ? `Updating${progress}` : "Update"}
+    </Button>
   )
 }
 

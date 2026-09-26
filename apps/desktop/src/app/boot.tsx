@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { SessionContext } from "@/app/client"
 import { createAppRouter } from "@/app/router"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
+import { startUpdateChecks } from "@/app/updates"
 import { useTheme } from "@/components/theme-provider"
 import { createPlatform } from "@/platform"
 import { Setup } from "@/screens/setup"
@@ -28,6 +29,8 @@ type State =
 export function Boot() {
   const [state, setState] = useState<State>({ phase: "loading" })
   const { theme } = useTheme()
+
+  useEffect(() => startUpdateChecks(), [])
 
   useEffect(() => {
     let cancelled = false
