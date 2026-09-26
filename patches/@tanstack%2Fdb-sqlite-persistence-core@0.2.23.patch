@@ -1,0 +1,65 @@
+diff --git a/dist/cjs/sqlite-core-adapter.cjs b/dist/cjs/sqlite-core-adapter.cjs
+index 5717d6a87740a4e6bcde8be73ce6a9c7cb0d4f40..2a92b331673675727c2f1c21f9eced20a6302a80 100644
+--- a/dist/cjs/sqlite-core-adapter.cjs
++++ b/dist/cjs/sqlite-core-adapter.cjs
+@@ -22,10 +22,14 @@ const persistedTaggedValueTypes = /* @__PURE__ */ new Set([
+ const orderByObjectIds = /* @__PURE__ */ new WeakMap();
+ let nextOrderByObjectId = 1;
+ function isDuplicateColumnAddError(error, columnName) {
+-  if (!(error instanceof Error)) {
++  const message = error instanceof Error
++    ? error.message.toLowerCase()
++    : typeof error === "string"
++      ? error.toLowerCase()
++      : null;
++  if (message === null) {
+     return false;
+   }
+-  const message = error.message.toLowerCase();
+   const normalizedColumnName = columnName.toLowerCase();
+   return message.includes(`duplicate column name`) && message.includes(normalizedColumnName) || message.includes(`already exists`) && message.includes(normalizedColumnName);
+ }
+diff --git a/dist/esm/sqlite-core-adapter.js b/dist/esm/sqlite-core-adapter.js
+index 35150d1c77417400fc6a267f4d6076736cfa6aeb..942ce1f40292bb4a801fdb2a18e986fed8a0edf3 100644
+--- a/dist/esm/sqlite-core-adapter.js
++++ b/dist/esm/sqlite-core-adapter.js
+@@ -20,10 +20,14 @@ const persistedTaggedValueTypes = /* @__PURE__ */ new Set([
+ const orderByObjectIds = /* @__PURE__ */ new WeakMap();
+ let nextOrderByObjectId = 1;
+ function isDuplicateColumnAddError(error, columnName) {
+-  if (!(error instanceof Error)) {
++  const message = error instanceof Error
++    ? error.message.toLowerCase()
++    : typeof error === "string"
++      ? error.toLowerCase()
++      : null;
++  if (message === null) {
+     return false;
+   }
+-  const message = error.message.toLowerCase();
+   const normalizedColumnName = columnName.toLowerCase();
+   return message.includes(`duplicate column name`) && message.includes(normalizedColumnName) || message.includes(`already exists`) && message.includes(normalizedColumnName);
+ }
+diff --git a/src/sqlite-core-adapter.ts b/src/sqlite-core-adapter.ts
+index 69f29fc604aad9c4968a8fbaf029e7dab7bd09e5..110d66ae0cda1a4596d18cea182b1287d25a6e48 100644
+--- a/src/sqlite-core-adapter.ts
++++ b/src/sqlite-core-adapter.ts
+@@ -121,11 +121,15 @@ function isDuplicateColumnAddError(
+   error: unknown,
+   columnName: string,
+ ): boolean {
+-  if (!(error instanceof Error)) {
++  const message =
++    error instanceof Error
++      ? error.message.toLowerCase()
++      : typeof error === "string"
++        ? error.toLowerCase()
++        : null
++  if (message === null) {
+     return false
+   }
+-
+-  const message = error.message.toLowerCase()
+   const normalizedColumnName = columnName.toLowerCase()
+   return (
+     (message.includes(`duplicate column name`) &&

@@ -27,5 +27,8 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
+  ],
+  "patchedDependencies": {
+    "@tanstack/db-sqlite-persistence-core@0.2.23": "patches/@tanstack%2Fdb-sqlite-persistence-core@0.2.23.patch"
+  }
 }
