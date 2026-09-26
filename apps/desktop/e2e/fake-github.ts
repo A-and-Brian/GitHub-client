@@ -122,6 +122,15 @@ export async function fakeGitHub(
     mergeError?: number
     mergeGate?: Promise<void>
     headOid?: string
+    checks?: Array<{
+      name: string
+      status: string
+      conclusion: string | null
+      detailsUrl?: string
+      workflowRunId?: number | null
+      workflowName?: string | null
+    }>
+    commentCount?: number
   } = {},
 ) {
   const settings = {
@@ -254,6 +263,40 @@ export async function fakeGitHub(
         detail.pullRequest.isDraft = options.draft ?? detail.pullRequest.isDraft
         detail.pullRequest.headRefOid = options.headOid ?? detail.pullRequest.headRefOid
         detail.pullRequest.mergeable = options.mergeable ?? detail.pullRequest.mergeable
+        if (options.commentCount !== undefined) {
+          detail.pullRequest.timelineItems.nodes = Array.from(
+            { length: options.commentCount },
+            (_, i) => ({
+              __typename: "IssueComment",
+              id: `C_${i + 1}`,
+              databaseId: i + 1,
+              bodyHTML: `<p>Conversation entry ${i + 1}</p>`,
+              createdAt: "2026-09-21T10:00:00Z",
+              author: { login: "octo", avatarUrl: "" },
+            }),
+          )
+        }
+        if (options.checks) {
+          detail.pullRequest.commits.nodes[0]!.commit.statusCheckRollup.contexts.nodes =
+            options.checks.map((check, index) => ({
+              __typename: "CheckRun",
+              name: check.name,
+              status: check.status,
+              conclusion: check.conclusion,
+              detailsUrl:
+                check.detailsUrl ??
+                `https://github.com/acme/api/actions/runs/${9 + index}/job/${99 + index}`,
+              checkSuite:
+                check.workflowRunId === null
+                  ? { workflowRun: null }
+                  : {
+                      workflowRun: {
+                        databaseId: check.workflowRunId ?? 9 + index,
+                        workflow: { name: check.workflowName ?? "CI" },
+                      },
+                    },
+            }))
+        }
         if (merged) detail.pullRequest.state = "MERGED"
         return json(route, { data: { repository: detail } })
       }

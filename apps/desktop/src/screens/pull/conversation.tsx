@@ -19,6 +19,7 @@ import { UserAvatar } from "@/components/avatar"
 import { GitHubHtml } from "@/components/github-html"
 import { ReviewBadge } from "@/components/status"
 import { RelativeTime } from "@/components/time"
+import { ChecksContent } from "./checks"
 
 const REVIEW_TEXT: Record<string, string> = {
   APPROVED: "approved these changes",
@@ -32,44 +33,50 @@ export function ConversationTab({ detail }: { detail: PullRequestDetail }) {
   const [owner, repo] = detail.repo.split("/") as [string, string]
   const unresolved = detail.threads.filter((t) => !t.isResolved)
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
-        <Card author={detail.author} createdAt={detail.createdAt} verb="opened this pull request">
-          <GitHubHtml html={detail.bodyHTML} />
-        </Card>
-        {detail.timeline.map((item) => (
-          <TimelineEntry key={item.id} item={item} />
-        ))}
-        {unresolved.length > 0 && (
-          <section className="rounded-lg border p-3 text-sm">
-            <h2 className="mb-2 font-medium">
-              {unresolved.length} unresolved review thread{unresolved.length === 1 ? "" : "s"}
-            </h2>
-            <ul className="flex flex-col gap-1">
-              {unresolved.map((t) => (
-                <li key={t.id}>
-                  <Link
-                    to="/pr/$owner/$repo/$number"
-                    params={{ owner, repo, number: String(detail.number) }}
-                    search={{ tab: "files" }}
-                    hash={`thread-${t.id}`}
-                    className="flex gap-2 hover:underline"
-                  >
-                    <code className="shrink-0 text-xs">
-                      {t.path}
-                      {t.line ? `:${t.line}` : " (outdated)"}
-                    </code>
-                    <span className="truncate text-muted-foreground">{t.comments[0]?.body}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {detail.state === "OPEN" && (
-          <MergeBox key={`${detail.repo}#${detail.number}:${detail.headOid}`} detail={detail} />
-        )}
-        <CommentBox detail={detail} />
+    <div className="pull-conversation-scroll h-full overflow-y-auto">
+      <div className="pull-conversation-layout mx-auto flex max-w-3xl flex-col gap-4 p-4">
+        <div className="pull-conversation-main flex min-w-0 flex-col gap-4">
+          <Card author={detail.author} createdAt={detail.createdAt} verb="opened this pull request">
+            <GitHubHtml html={detail.bodyHTML} />
+          </Card>
+          {detail.timeline.map((item) => (
+            <TimelineEntry key={item.id} item={item} />
+          ))}
+          {unresolved.length > 0 && (
+            <section className="rounded-lg border p-3 text-sm">
+              <h2 className="mb-2 font-medium">
+                {unresolved.length} unresolved review thread{unresolved.length === 1 ? "" : "s"}
+              </h2>
+              <ul className="flex flex-col gap-1">
+                {unresolved.map((t) => (
+                  <li key={t.id}>
+                    <Link
+                      to="/pr/$owner/$repo/$number"
+                      params={{ owner, repo, number: String(detail.number) }}
+                      search={{ tab: "files" }}
+                      hash={`thread-${t.id}`}
+                      className="flex gap-2 hover:underline"
+                    >
+                      <code className="shrink-0 text-xs">
+                        {t.path}
+                        {t.line ? `:${t.line}` : " (outdated)"}
+                      </code>
+                      <span className="truncate text-muted-foreground">{t.comments[0]?.body}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {detail.state === "OPEN" && (
+            <MergeBox key={`${detail.repo}#${detail.number}:${detail.headOid}`} detail={detail} />
+          )}
+          <CommentBox detail={detail} />
+        </div>
+        <aside className="pull-conversation-checks" aria-label="Pull request checks">
+          <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
+          <ChecksContent detail={detail} />
+        </aside>
       </div>
     </div>
   )
