@@ -22,6 +22,12 @@ async function menuAction(page: Page, action: string, id = "PR_1") {
 }
 
 async function beginDrag(page: Page, source: Locator, target: Locator) {
+  // Pointer APIs do not auto-wait for the row's async ordering/write readiness.
+  const sourceRow = source.locator("xpath=ancestor-or-self::li[@data-pull-id]")
+  const activator = sourceRow.getByTitle("Drag to reorder or move between sections", {
+    exact: true,
+  })
+  await activator.click({ trial: true })
   const from = await source.boundingBox()
   const to = await target.boundingBox()
   if (!from || !to) throw new Error("Drag source or target is not visible")
@@ -39,6 +45,8 @@ test("pin order persists and exact Undo restores a snoozed pinned PR", async ({ 
   await menuAction(page, "Pin")
   await expect(pinned(page).locator('[data-pull-id="PR_1"]')).toBeVisible()
   await expect(page.getByRole("heading", { name: "Speed up the diff view" })).toHaveCount(0)
+  // The row moves optimistically; the success toast follows the durable commit.
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /^Pinned/ })).toBeVisible()
   await page.reload()
   await expect(pinned(page).locator('[data-pull-id="PR_1"]')).toBeVisible()
   await row(page).getByText("Speed up the diff view", { exact: true }).click()
@@ -176,6 +184,9 @@ test("keyboard ordering persists and filtered ordering preserves hidden PRs", as
   const initial = await ids()
   await menuAction(page, "Move down")
   await expect.poll(ids).toEqual([initial[1], initial[0], ...initial.slice(2)])
+  await expect(
+    page.locator("[data-sonner-toast]").filter({ hasText: "Inbox order updated" }),
+  ).toBeVisible()
   await page.reload()
   await expect.poll(ids).toEqual([initial[1], initial[0], ...initial.slice(2)])
   await page.getByLabel("Filter inbox").fill("Follow-up")
@@ -186,6 +197,9 @@ test("keyboard ordering persists and filtered ordering preserves hidden PRs", as
 
 test("dragging within Active commits the indicated before-row position", async ({ page }) => {
   await setup(page)
+  await row(page, "PR_3")
+    .getByTitle("Drag to reorder or move between sections", { exact: true })
+    .click({ trial: true })
   const from = await row(page, "PR_3").boundingBox()
   const to = await row(page, "PR_1").boundingBox()
   if (!from || !to) throw new Error("Reorder rows are missing")
