@@ -7,7 +7,7 @@ import { prKey } from "./domain/types"
 import { GraphQLClient } from "./github/graphql"
 import { RestClient } from "./github/rest"
 import type { Platform } from "./platform"
-import { syncRunJobs, syncWorkflowRuns, syncWorkflows } from "./sync/actions"
+import { syncRunJobs, syncWorkflowRuns, syncWorkflows, toWorkflowRun } from "./sync/actions"
 import { syncGroups } from "./sync/groups"
 import { Poller } from "./sync/poller"
 import { syncPullDetail, syncPullFiles } from "./sync/pull-detail"
@@ -244,6 +244,11 @@ export class GitHubClient {
   async cancelRun(repo: string, runId: number) {
     await workflows.cancelRun(this.rest, repo, runId)
     await Promise.all([this.refresh(jobKeys.runs(repo)), this.refresh(jobKeys.runJobs(runId))])
+  }
+
+  /** One run, for runs older than the latest ones kept in `collections.workflowRuns`. */
+  async fetchRun(repo: string, runId: number) {
+    return toWorkflowRun(repo, await this.rest.get(`/repos/${repo}/actions/runs/${runId}`))
   }
 
   fetchJobLog(repo: string, jobId: number): Promise<string> {
