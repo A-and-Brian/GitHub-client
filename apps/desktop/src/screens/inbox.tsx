@@ -26,7 +26,6 @@ import {
 } from "./inbox-parts"
 import { InboxRow } from "./inbox-row"
 import { type DropPosition, InboxSections } from "./inbox-sidebar"
-import { AccountSyncFooter } from "./layout"
 import { PullContent, type PullTab } from "./pull/pull-page"
 
 export function Inbox() {
@@ -50,8 +49,9 @@ export function Inbox() {
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dropPosition, setDropPosition] = useState<DropPosition | null>(null)
   const search = useRef<HTMLInputElement>(null)
+  const inboxPane = useRef<HTMLDivElement>(null)
   const orderAccount = useRef(viewer.login)
-  const geometry = useInboxGeometry()
+  const geometry = useInboxGeometry(inboxPane)
   const { busyIds, latestUndo, runMutation, runRowMutation } = useInboxMutations()
   useWatch((c) => c.watchGroup("me"), [])
   const status = useJobStatus(jobKeys.groupPulls("me"))
@@ -265,7 +265,7 @@ export function Inbox() {
   )
 
   return (
-    <div className="relative flex h-full min-w-0">
+    <div ref={inboxPane} className="relative flex h-full min-w-0">
       <DndContext
         sensors={drag.sensors}
         collisionDetection={(args) => {
@@ -324,7 +324,6 @@ export function Inbox() {
             onShowMoreSettled={() => setSettledLimit((limit) => limit + 25)}
           />
           <ContributionCalendar />
-          <AccountSyncFooter />
           {!geometry.mobile && (
             <div
               {...geometry.separatorProps}

@@ -9,6 +9,7 @@ import { createAppRouter } from "@/app/router"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { startUpdateChecks } from "@/app/updates"
 import { useTheme } from "@/components/theme-provider"
+import { isMacDesktop, WindowChrome } from "@/components/window-chrome"
 import { createPlatform } from "@/platform"
 import { Setup } from "@/screens/setup"
 
@@ -75,9 +76,9 @@ export function Boot() {
     }
   }, [])
 
-  return (
-    <TooltipProvider>
-      {state.phase === "loading" && <div className="h-svh" />}
+  const content = (
+    <>
+      {state.phase === "loading" && <div className={isMacDesktop ? "h-full" : "h-svh"} />}
       {state.phase === "failed" && (
         <div className="p-8 text-sm text-destructive">Could not start: {state.error}</div>
       )}
@@ -85,10 +86,24 @@ export function Boot() {
         <Setup
           client={state.client}
           error={state.error}
+          className={isMacDesktop ? "h-full" : undefined}
           onSignedIn={(viewer) => setState(ready(state.client, viewer))}
         />
       )}
       {state.phase === "ready" && <App client={state.client} viewer={state.viewer} />}
+    </>
+  )
+
+  return (
+    <TooltipProvider>
+      {isMacDesktop && state.phase !== "ready" ? (
+        <div className="flex h-svh flex-col overflow-hidden">
+          <WindowChrome />
+          <div className="min-h-0 flex-1">{content}</div>
+        </div>
+      ) : (
+        content
+      )}
       <Toaster theme={theme} position="bottom-right" expand />
     </TooltipProvider>
   )

@@ -4,13 +4,12 @@ import { fakeGitHub } from "./fake-github"
 async function signIn(page: import("@playwright/test").Page) {
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
   await page.goto("/")
-  await expect(page.getByRole("button", { name: "Browse inbox and groups" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
 }
 
 test("nested teams retain repository context and open settings", async ({ page }) => {
   await fakeGitHub(page, { hierarchy: true })
   await signIn(page)
-  await page.getByRole("button", { name: "Browse inbox and groups" }).click()
   await expect(page.getByRole("link", { name: "Backend", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Collapse acme/Engineering", exact: true }).click()
   await expect(page.getByRole("link", { name: "Backend", exact: true })).toBeHidden()
@@ -146,7 +145,7 @@ test("inbox and organization navigation work at narrow widths", async ({ page })
   await page.setViewportSize({ width: 390, height: 844 })
   await fakeGitHub(page, { hierarchy: true })
   await signIn(page)
-  await page.getByRole("button", { name: "Browse inbox and groups" }).click()
+  await page.getByRole("button", { name: "Navigation", exact: true }).click()
   await page.getByRole("link", { name: "Backend", exact: true }).click()
   await expect(page.getByRole("button", { name: "Close navigation" })).toHaveCount(0)
   await page.getByRole("button", { name: "Navigation", exact: true }).click()

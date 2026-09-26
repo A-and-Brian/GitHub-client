@@ -1,15 +1,10 @@
-import type { HTMLAttributes } from "react"
-import { useRef, useState, useSyncExternalStore } from "react"
+import type { HTMLAttributes, RefObject } from "react"
+import { useEffect, useRef, useState } from "react"
 
 const WIDTH_KEY = "github-client.inbox-width.v1"
 const DEFAULT_WIDTH = 256
 const MIN_WIDTH = 208
 const DETAIL_WIDTH = 640
-
-function subscribe(listener: () => void) {
-  window.addEventListener("resize", listener)
-  return () => window.removeEventListener("resize", listener)
-}
 
 function savedWidth() {
   try {
@@ -21,13 +16,22 @@ function savedWidth() {
 }
 
 /** Keep the requested width when a small window temporarily clamps it. */
-export function useInboxGeometry() {
-  const viewport = useSyncExternalStore(subscribe, () => window.innerWidth)
+export function useInboxGeometry(containerRef: RefObject<HTMLElement | null>) {
+  const [availableWidth, setAvailableWidth] = useState(0)
   const [requestedWidth, setRequestedWidth] = useState(savedWidth)
   const drag = useRef<{ x: number; width: number } | null>(null)
-  const maximum = Math.max(MIN_WIDTH, viewport - DETAIL_WIDTH)
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const measure = () => setAvailableWidth(container.clientWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [containerRef])
+  const maximum = Math.max(MIN_WIDTH, availableWidth - DETAIL_WIDTH)
   const width = Math.max(MIN_WIDTH, Math.min(maximum, requestedWidth))
-  const mobile = viewport < MIN_WIDTH + DETAIL_WIDTH
+  const mobile = availableWidth < MIN_WIDTH + DETAIL_WIDTH
   const save = (next: number) => {
     const value = Math.max(MIN_WIDTH, Math.min(maximum, next))
     setRequestedWidth(value)

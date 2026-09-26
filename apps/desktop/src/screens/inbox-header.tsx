@@ -1,15 +1,9 @@
 import { Button } from "@github-client/ui/components/button"
 import { Input } from "@github-client/ui/components/input"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@github-client/ui/components/popover"
+import { Popover, PopoverContent, PopoverTrigger } from "@github-client/ui/components/popover"
 import { cn } from "@github-client/ui/lib/utils"
-import { ChevronDownIcon, InboxIcon, InfoIcon, RefreshCwIcon } from "lucide-react"
+import { InboxIcon, InfoIcon, RefreshCwIcon } from "lucide-react"
 import type { RefObject } from "react"
-import { InboxScopeChooser } from "./layout"
 
 export function InboxHeader({
   search,
@@ -36,33 +30,10 @@ export function InboxHeader({
 }) {
   return (
     <header className="shrink-0 space-y-2 border-b p-3">
-      <div className="flex items-center gap-2">
-        <h1 className="flex items-center gap-2 px-1 text-sm font-semibold">
-          <InboxIcon className="size-4" />
-          PR inbox
-        </h1>
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto"
-                aria-label="Browse inbox and groups"
-              />
-            }
-          >
-            Inbox <ChevronDownIcon className="ml-1 size-3.5" />
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="max-h-[70vh] w-[min(300px,85vw)] overflow-y-auto p-2"
-          >
-            <PopoverTitle className="sr-only">Inbox and groups</PopoverTitle>
-            <InboxScopeChooser />
-          </PopoverContent>
-        </Popover>
-      </div>
+      <h1 className="flex items-center gap-2 px-1 text-sm font-semibold">
+        <InboxIcon className="size-4" />
+        PR inbox
+      </h1>
       <div className="flex min-w-0 items-center gap-2">
         <Input
           ref={search}

@@ -33,6 +33,7 @@ import { useShortcuts } from "@/app/shortcuts"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
+import { WindowChrome } from "@/components/window-chrome"
 import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
@@ -42,7 +43,6 @@ export function Layout() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const isInbox = pathname === "/inbox"
   const lastPathname = useRef(pathname)
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export function Layout() {
 
   return (
     <div className="flex h-svh overflow-hidden bg-background text-foreground">
-      {mobileMenuOpen && !isInbox && (
+      {mobileMenuOpen && (
         <button
           type="button"
           className="fixed inset-0 z-40 bg-black/40 md:hidden"
@@ -64,22 +64,18 @@ export function Layout() {
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
-      {!isInbox && (
-        <GlobalGroupRail
-          pathname={pathname}
-          mobileMenuOpen={mobileMenuOpen}
-          onOpenPalette={() => setPaletteOpen(true)}
-        />
-      )}
+      <GlobalGroupRail
+        pathname={pathname}
+        mobileMenuOpen={mobileMenuOpen}
+        onOpenPalette={() => setPaletteOpen(true)}
+      />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {!isInbox && (
-          <div className="border-b px-3 py-2 md:hidden">
-            <Button variant="ghost" size="sm" onClick={() => setMobileMenuOpen(true)}>
-              <MenuIcon />
-              Navigation
-            </Button>
-          </div>
-        )}
+        <div className="border-b px-3 py-2 md:hidden">
+          <Button variant="ghost" size="sm" onClick={() => setMobileMenuOpen(true)}>
+            <MenuIcon />
+            Navigation
+          </Button>
+        </div>
         <Outlet />
       </main>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
@@ -112,6 +108,7 @@ function GlobalGroupRail({
         mobileMenuOpen ? "fixed inset-y-0 left-0 z-50 flex" : "hidden md:flex",
       )}
     >
+      <WindowChrome />
       <div className="flex items-center gap-2 p-3">
         <Button
           variant="outline"
@@ -151,45 +148,6 @@ function GlobalGroupRail({
       </nav>
       <AccountSyncFooter />
     </aside>
-  )
-}
-
-export function InboxScopeChooser() {
-  const { client } = useSession()
-  const groups = useLiveQuery((q) =>
-    q.from({ g: client.collections.groups.collection }).orderBy(({ g }) => g.order, "asc"),
-  ).data
-  const pulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
-  const counts = new Map<string, number>()
-  for (const pull of pulls) counts.set(pull.groupId, (counts.get(pull.groupId) ?? 0) + 1)
-  const tree = useMemo(() => buildGroupTree(groups), [groups])
-  return (
-    <nav aria-label="Inbox and groups" className="space-y-0.5 px-2 pb-2">
-      <Link
-        to="/inbox"
-        aria-current={pathname === "/inbox" ? "page" : undefined}
-        className={cn(
-          "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
-          pathname === "/inbox" && "bg-sidebar-accent font-medium",
-        )}
-      >
-        <InboxIcon className="size-4 shrink-0 text-muted-foreground" />
-        Inbox
-      </Link>
-      {tree.map((node) => (
-        <GroupNavNode
-          key={node.group.id}
-          node={node}
-          depth={0}
-          collapsed={collapsed}
-          setCollapsed={setCollapsed}
-          pathname={pathname}
-          counts={counts}
-        />
-      ))}
-    </nav>
   )
 }
 

@@ -4,17 +4,20 @@ import { fakeGitHub } from "./fake-github"
 async function signIn(page: Page) {
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
   await page.goto("/")
-  await expect(page.getByRole("button", { name: "Browse inbox and groups" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
 }
 
 const inbox = (page: Page) => page.getByRole("complementary", { name: "Pull request inbox" })
 const openPull = (page: Page) =>
   inbox(page).getByText("Speed up the diff view", { exact: true }).click()
 
-test("one sidebar preserves archived selection, filter and failure state", async ({ page }) => {
+test("persistent outer navigation and inner inbox preserve archived selection, filter and failure state", async ({
+  page,
+}) => {
   const requests = await fakeGitHub(page, { checkState: "FAILURE" })
   await signIn(page)
-  await expect(page.getByRole("complementary")).toHaveCount(1)
+  await expect(page.getByRole("complementary")).toHaveCount(2)
+  await expect(page.getByRole("button", { name: /Go to/ })).toBeVisible()
   await page.getByLabel("Filter inbox").fill("diff")
   await openPull(page)
   await page.getByRole("button", { name: "Settle locally", exact: true }).click()
@@ -94,7 +97,6 @@ test("contributions expose dates, keyboard navigation, year view and reuse cache
     page.getByRole("group", { name: "Contributions over the last year", exact: true }),
   ).toBeVisible()
   await page.keyboard.press("Escape")
-  await page.getByRole("button", { name: "Browse inbox and groups" }).click()
   await page.getByRole("link", { name: "Involving me", exact: true }).click()
   await page.getByRole("link", { name: "Inbox", exact: true }).click()
   await expect(recent).toBeVisible()
@@ -118,7 +120,7 @@ test("calendar errors remain unavailable, and retry can show a real zero", async
   await expect(page.getByText("0 contributions in the last year")).toBeVisible()
 })
 
-for (const width of [1440, 1024, 390]) {
+for (const width of [1440, 1024, 900, 390]) {
   for (const theme of ["light", "dark"] as const) {
     test(`layout and mobile return at ${width}px in ${theme}`, async ({ page }, info) => {
       await page.setViewportSize({ width, height: 900 })
@@ -202,7 +204,7 @@ test("short window keeps Active and footer usable with both archives expanded", 
   await page.getByRole("button", { name: /^Snoozed/ }).click()
   await page.getByRole("button", { name: /^Settled/ }).click()
   const active = page.getByRole("list", { name: "Active pull requests" })
-  const footer = inbox(page).locator("footer")
+  const footer = page.locator("footer")
   const activeBox = await active.boundingBox()
   const footerBox = await footer.boundingBox()
   expect(activeBox!.height).toBeGreaterThanOrEqual(80)
