@@ -1,5 +1,11 @@
 # @github-client/desktop
 
+## 0.1.1
+
+### Patch Changes
+
+- [#4](https://github.com/Yis-company/GitHub-client/pull/4) [`c2776b4`](https://github.com/Yis-company/GitHub-client/commit/c2776b4d46fe8168fbd7ab9d5813159a0b6f26d3) Thanks [@ybtam](https://github.com/ybtam)! - Handle Tauri SQLite duplicate-column errors during persistence startup.
+
 ## 0.1.0
 
 ### Minor Changes
