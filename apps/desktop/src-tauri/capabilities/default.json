@@ -8,6 +8,8 @@
     "sql:default",
     "sql:allow-execute",
     "opener:default",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "http:default",
       "allow": [
