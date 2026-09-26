@@ -52,6 +52,7 @@ The same UI runs in a normal browser for fast iteration. The token is kept in `s
 | `bun run desktop:build` | Build the desktop app bundle |
 | `bun run typecheck` | Type-check all packages |
 | `bun run test` | Run the unit tests |
+| `bun --cwd apps/desktop test:e2e` | Run the Playwright UI tests against a fake GitHub API |
 | `bun run lint` | Lint and format check (Biome) |
 | `bun run format` | Apply Biome fixes |
 

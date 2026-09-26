@@ -124,6 +124,9 @@ export async function fakeGitHub(page: Page) {
       if (query.includes("PullDetail")) return json(route, { data: { repository: pullDetail } })
     }
     if (url.pathname === "/repos/acme/api/pulls/7/files") return json(route, files)
+    if (url.pathname === "/repos/acme/api/pulls/7/reviews" && request.method() === "POST") {
+      return json(route, { id: 1 })
+    }
     return route.fulfill({
       status: 404,
       contentType: "application/json",
