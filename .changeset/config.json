@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
-  "changelog": ["@changesets/changelog-github", { "repo": "A-and-Brian/GitHub-client" }],
+  "changelog": ["@changesets/changelog-github", { "repo": "Yis-company/GitHub-client" }],
   "commit": false,
   "baseBranch": "main",
   "access": "restricted",

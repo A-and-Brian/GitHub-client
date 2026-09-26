@@ -4,7 +4,9 @@ import type { Group, PullRequest } from "./domain/types"
 import type { InboxPreferenceStore } from "./inbox"
 import {
   deriveInboxPulls,
+  ensureInboxOrder,
   inboxPreferenceKey,
+  moveInboxPull,
   reconcileInboxState,
   restoreInboxPreference,
   restoreInboxPull,
@@ -302,6 +304,175 @@ describe("PR inbox", () => {
     )
   })
 
+  test("seeds old preferences without changing lifecycle fields and rejects stale UI state", async () => {
+    const collections = createCollections(db.open())
+    const legacy = {
+      key: inboxPreferenceKey("yi", "PR_1"),
+      accountLogin: "yi",
+      pullId: "PR_1",
+      state: "settled" as const,
+      snoozedUntil: null,
+      snapshot: { headOid: "old", reviewRequests: [], failed: false },
+      changedAt: "2026-09-20T00:00:00.000Z",
+    }
+    await collections.inboxPreferences.upsert([legacy])
+
+    await ensureInboxOrder(
+      collections.inboxPreferences,
+      "yi",
+      [{ pull: pull(), state: "active" }],
+      123,
+    )
+
+    expect(collections.inboxPreferences.collection.get(legacy.key)).toMatchObject(legacy)
+  })
+
+  test("seeds active and snoozed fallback order, keeps ranks when a snoozed pin wakes", async () => {
+    const collections = createCollections(db.open())
+    const one = pull({ number: 1 })
+    const two = pull({ id: "PR_2", key: "org:acme:PR_2", number: 2 })
+    const onePreference = {
+      key: inboxPreferenceKey("yi", one.id),
+      accountLogin: "yi",
+      pullId: one.id,
+      state: "active" as const,
+      snoozedUntil: null,
+      pinOrder: 1,
+      snapshot: { headOid: null, reviewRequests: [], failed: false },
+      changedAt: "2026-09-20T00:00:00.000Z",
+    }
+    const twoPreference = {
+      ...onePreference,
+      key: inboxPreferenceKey("yi", two.id),
+      pullId: two.id,
+      state: "snoozed" as const,
+      snoozedUntil: "2026-09-27T00:00:00.000Z",
+      pinOrder: 0,
+    }
+    await collections.inboxPreferences.upsert([onePreference, twoPreference])
+    await ensureInboxOrder(
+      collections.inboxPreferences,
+      "yi",
+      [
+        { pull: one, state: "active" },
+        { pull: two, state: "snoozed" },
+      ],
+      1,
+    )
+    expect(collections.inboxPreferences.collection.get(twoPreference.key)).toMatchObject({
+      activeOrder: 1,
+      pinOrder: 0,
+      state: "snoozed",
+      changedAt: twoPreference.changedAt,
+    })
+
+    await moveInboxPull(
+      collections.inboxPreferences,
+      "yi",
+      two,
+      "pinned",
+      { beforePullId: one.id },
+      2,
+    )
+    const rows = [...collections.inboxPreferences.collection.values()].sort(
+      (a, b) => (a.pinOrder ?? 99) - (b.pinOrder ?? 99),
+    )
+    expect(rows.map((row) => [row.pullId, row.activeOrder, row.pinOrder, row.state])).toEqual([
+      [two.id, 1, 0, "active"],
+      [one.id, 0, 1, "active"],
+    ])
+  })
+
+  test("filtered insertion uses full saved anchors and preserves hidden row order", async () => {
+    const collections = createCollections(db.open())
+    const pulls = [1, 2, 3, 4].map((number) =>
+      pull({ id: `PR_${number}`, key: `org:acme:PR_${number}`, number }),
+    )
+    await collections.inboxPreferences.upsert(
+      pulls.map((item, index) => ({
+        key: inboxPreferenceKey("yi", item.id),
+        accountLogin: "yi",
+        pullId: item.id,
+        state: "active" as const,
+        snoozedUntil: null,
+        snapshot: { headOid: null, reviewRequests: [], failed: false },
+        changedAt: "2026-09-20T00:00:00.000Z",
+        activeOrder: index,
+      })),
+    )
+
+    await moveInboxPull(
+      collections.inboxPreferences,
+      "yi",
+      pulls[2]!,
+      "active",
+      { beforePullId: pulls[0]!.id },
+      3,
+    )
+
+    const ordered = [...collections.inboxPreferences.collection.values()]
+      .sort((a, b) => a.activeOrder! - b.activeOrder!)
+      .map((row) => row.pullId)
+    expect(ordered).toEqual(["PR_3", "PR_1", "PR_2", "PR_4"])
+  })
+
+  test("settle clears both saved ranks and restore returns unpinned at top", async () => {
+    const collections = createCollections(db.open())
+    const one = pull()
+    const two = pull({ id: "PR_2", key: "org:acme:PR_2", number: 2 })
+    await collections.inboxPreferences.upsert([
+      {
+        key: inboxPreferenceKey("yi", one.id),
+        accountLogin: "yi",
+        pullId: one.id,
+        state: "active",
+        snoozedUntil: null,
+        snapshot: { headOid: null, reviewRequests: [], failed: false },
+        changedAt: "2026-09-20T00:00:00.000Z",
+        activeOrder: 0,
+        pinOrder: 0,
+      },
+      {
+        key: inboxPreferenceKey("yi", two.id),
+        accountLogin: "yi",
+        pullId: two.id,
+        state: "active",
+        snoozedUntil: null,
+        snapshot: { headOid: null, reviewRequests: [], failed: false },
+        changedAt: "2026-09-20T00:00:00.000Z",
+        activeOrder: 1,
+        pinOrder: 1,
+      },
+    ])
+    await settleInboxPull(collections.inboxPreferences, "yi", one, 4)
+    expect(
+      collections.inboxPreferences.collection.get(inboxPreferenceKey("yi", one.id)),
+    ).toMatchObject({
+      state: "settled",
+      activeOrder: undefined,
+      pinOrder: undefined,
+    })
+    expect(
+      collections.inboxPreferences.collection.get(inboxPreferenceKey("yi", two.id)),
+    ).toMatchObject({
+      activeOrder: 0,
+      pinOrder: 0,
+    })
+    await restoreInboxPull(collections.inboxPreferences, "yi", one, 5)
+    expect(
+      collections.inboxPreferences.collection.get(inboxPreferenceKey("yi", one.id)),
+    ).toMatchObject({
+      state: "active",
+      activeOrder: 0,
+      pinOrder: undefined,
+    })
+    expect(
+      collections.inboxPreferences.collection.get(inboxPreferenceKey("yi", two.id)),
+    ).toMatchObject({
+      activeOrder: 1,
+    })
+  })
+
   test("ignores a cached PR row observed before it was settled", async () => {
     const collections = createCollections(db.open())
     await settleInboxPull(collections.inboxPreferences, "yi", pull({ checkState: "SUCCESS" }), 1000)
@@ -312,5 +483,57 @@ describe("PR inbox", () => {
       2000,
     )
     expect([...collections.inboxPreferences.collection.values()][0]?.state).toBe("settled")
+  })
+
+  test("merges snooze expiry with settled reactivation and preserves pin fallback", async () => {
+    const collections = createCollections(db.open())
+    const expired = pull({ id: "PR_2", key: "org:acme:PR_2", number: 2 })
+    const settled = pull({
+      id: "PR_3",
+      key: "org:acme:PR_3",
+      number: 3,
+      headOid: "new-head",
+      syncedAt: "1970-01-01T00:00:00.900Z",
+    })
+    await collections.inboxPreferences.upsert([
+      {
+        key: inboxPreferenceKey("yi", expired.id),
+        accountLogin: "yi",
+        pullId: expired.id,
+        state: "snoozed",
+        snoozedUntil: "1970-01-01T00:00:00.500Z",
+        snapshot: { headOid: null, reviewRequests: [], failed: false },
+        changedAt: "1970-01-01T00:00:00.100Z",
+        activeOrder: 1,
+        pinOrder: 0,
+      },
+      {
+        key: inboxPreferenceKey("yi", settled.id),
+        accountLogin: "yi",
+        pullId: settled.id,
+        state: "settled",
+        snoozedUntil: null,
+        snapshot: { headOid: "old-head", reviewRequests: [], failed: false },
+        changedAt: "1970-01-01T00:00:00.800Z",
+      },
+    ])
+
+    await reconcileInboxState(collections.inboxPreferences, "yi", [expired, settled], 1000)
+
+    expect(
+      collections.inboxPreferences.collection.get(inboxPreferenceKey("yi", settled.id)),
+    ).toMatchObject({
+      state: "active",
+      activeOrder: 0,
+      pinOrder: undefined,
+      snapshot: { headOid: "new-head" },
+    })
+    expect(
+      collections.inboxPreferences.collection.get(inboxPreferenceKey("yi", expired.id)),
+    ).toMatchObject({
+      state: "active",
+      activeOrder: 1,
+      pinOrder: 0,
+    })
   })
 })

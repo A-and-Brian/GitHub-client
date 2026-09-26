@@ -121,6 +121,11 @@ test("a changed head revision invalidates confirmation", async ({ page }) => {
   await merge.click()
   await expect(page.getByRole("button", { name: "Confirm merge" })).toBeVisible()
 
+  // Details render before the initial sync has finished persisting. A refresh
+  // during that run deliberately joins it instead of starting another request.
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }).locator(".animate-spin"),
+  ).toHaveCount(0)
   options.headOid = "new456"
   await page.getByRole("button", { name: "Refresh" }).click()
   await expect(page.getByRole("button", { name: "Confirm merge" })).toHaveCount(0)

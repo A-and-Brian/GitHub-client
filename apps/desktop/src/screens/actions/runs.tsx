@@ -19,6 +19,7 @@ import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
 import { runsRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
+import { RepositoryContext } from "@/components/repository-context"
 import { type RunState, runState, StateIcon } from "@/components/status"
 import { duration, RelativeTime } from "@/components/time"
 import { openExternal } from "@/platform"
@@ -123,11 +124,10 @@ export function RunsPage() {
     id === ALL_WORKFLOWS ? "All workflows" : workflows.find((w) => String(w.id) === id)?.name
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2">
-        <h1 className="truncate font-semibold">
-          {repo} <span className="font-normal text-muted-foreground">· Actions</span>
-        </h1>
+    <div className="flex h-full min-w-0 flex-col">
+      <RepositoryContext owner={owner} repo={name} location="Actions" />
+      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
+        <h1 className="truncate font-semibold">Workflow runs</h1>
         <Tabs value={status} onValueChange={(v) => setStatus(v as StatusFilter)}>
           <TabsList>
             <TabsTrigger value="all">All</TabsTrigger>

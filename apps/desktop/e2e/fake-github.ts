@@ -108,6 +108,14 @@ export async function fakeGitHub(
     checkState?: string
     admin?: boolean
     settingsError?: number
+    checks?: Array<{ status: string; conclusion: string | null }>
+    contributionsError?: boolean
+    contributionsZero?: boolean
+    lastContributionDays?: number
+    pullCount?: number
+    pullTitle?: string
+    pullUpdatedAt?: Record<string, string>
+    workflowRun?: boolean
     draft?: boolean
     mergeable?: string
     mergeMethods?: Array<"squash" | "merge" | "rebase">
@@ -198,28 +206,51 @@ export async function fakeGitHub(
           data: {
             search: {
               pageInfo: { hasNextPage: false, endCursor: null },
-              nodes: [
-                {
-                  ...pullNode,
-                  headRefOid: options.headOid ?? "abc123",
-                  commits: {
-                    nodes: [
-                      {
-                        commit: {
-                          oid: options.headOid ?? "abc123",
-                          statusCheckRollup: { state: options.checkState ?? "SUCCESS" },
-                        },
+              nodes: Array.from({ length: options.pullCount ?? 1 }, (_, index) => ({
+                ...pullNode,
+                id: index === 0 ? "PR_1" : `PR_${index + 1}`,
+                updatedAt: options.pullUpdatedAt?.[`PR_${index + 1}`] ?? pullNode.updatedAt,
+                number: 7 + index,
+                title:
+                  index === 0
+                    ? (options.pullTitle ?? pullNode.title)
+                    : `Follow-up pull request ${index}`,
+                headRefOid: options.headOid ?? "abc123",
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        oid: options.headOid ?? "abc123",
+                        statusCheckRollup: { state: options.checkState ?? "SUCCESS" },
                       },
-                    ],
-                  },
+                    },
+                  ],
                 },
-              ],
+              })),
             },
           },
         })
       }
       if (query.includes("PullDetail")) {
         const detail = structuredClone(pullDetail)
+        const number = Number((body as { variables: { number: number } }).variables.number)
+        detail.pullRequest.number = number
+        detail.pullRequest.id = `PR_${number - 6}`
+        detail.pullRequest.title =
+          number === 7
+            ? (options.pullTitle ?? pullNode.title)
+            : `Follow-up pull request ${number - 7}`
+        if (options.checks) {
+          const nodes = detail.pullRequest.commits.nodes[0]!.commit.statusCheckRollup.contexts.nodes
+          const original = nodes[0]!
+          detail.pullRequest.commits.nodes[0]!.commit.statusCheckRollup.contexts.nodes =
+            options.checks.map((check, index) => ({
+              ...original,
+              ...check,
+              conclusion: check.conclusion as string,
+              name: `check-${index}`,
+            }))
+        }
         detail.squashMergeAllowed = options.mergeMethods
           ? options.mergeMethods.includes("squash")
           : detail.squashMergeAllowed
@@ -269,6 +300,41 @@ export async function fakeGitHub(
         if (merged) detail.pullRequest.state = "MERGED"
         return json(route, { data: { repository: detail } })
       }
+      if (query.includes("query Contributions")) {
+        if (options.contributionsError)
+          return json(route, { errors: [{ message: "Contribution data unavailable" }] })
+        const weeks = Array.from({ length: 52 }, (_, week) => ({
+          contributionDays: Array.from(
+            { length: week === 51 ? (options.lastContributionDays ?? 7) : 7 },
+            (_, weekday) => {
+              const date = new Date(Date.UTC(2025, 9, 5 + week * 7 + weekday))
+                .toISOString()
+                .slice(0, 10)
+              const contributionCount = options.contributionsZero ? 0 : (week + weekday) % 5
+              return {
+                date,
+                weekday,
+                contributionCount,
+                contributionLevel: [
+                  "NONE",
+                  "FIRST_QUARTILE",
+                  "SECOND_QUARTILE",
+                  "THIRD_QUARTILE",
+                  "FOURTH_QUARTILE",
+                ][contributionCount],
+              }
+            },
+          ),
+        }))
+        return json(route, {
+          data: { viewer: { contributionsCollection: { contributionCalendar: { weeks } } } },
+        })
+      }
+      return route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: '{"message":"Not Found"}',
+      })
     }
     if (url.pathname === "/repos/acme/api/pulls/7/merge" && request.method() === "PUT") {
       await options.mergeGate
@@ -285,7 +351,33 @@ export async function fakeGitHub(
         message: "Pull Request successfully merged",
       })
     }
-    if (url.pathname === "/repos/acme/api/pulls/7/files") return json(route, files)
+    if (url.pathname === "/repos/acme/api/actions/runs")
+      return json(route, {
+        workflow_runs: options.workflowRun
+          ? [
+              {
+                id: 9,
+                workflow_id: 1,
+                name: "CI",
+                display_title: "Verify navigation",
+                run_number: 9,
+                run_attempt: 1,
+                event: "pull_request",
+                status: "completed",
+                conclusion: "success",
+                head_branch: "navigation",
+                head_sha: "abc123",
+                actor: { login: "octo" },
+                created_at: "2026-09-26T10:00:00Z",
+                updated_at: "2026-09-26T10:05:00Z",
+                html_url: "https://github.com/acme/api/actions/runs/9",
+              },
+            ]
+          : [],
+      })
+    if (url.pathname === "/repos/acme/api/actions/runs/9/jobs") return json(route, { jobs: [] })
+    if (url.pathname === "/repos/acme/api/actions/workflows") return json(route, { workflows: [] })
+    if (/^\/repos\/acme\/api\/pulls\/\d+\/files$/.test(url.pathname)) return json(route, files)
     if (url.pathname === "/repos/acme/api/pulls/7/reviews" && request.method() === "POST") {
       return json(route, { id: 1 })
     }

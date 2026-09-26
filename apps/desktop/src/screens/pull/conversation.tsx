@@ -261,7 +261,7 @@ function MergeBox({ detail }: { detail: PullRequestDetail }) {
           </span>
         </Button>
       </div>
-      <p id={descriptionId} role="status" className="basis-full text-muted-foreground empty:hidden">
+      <p id={descriptionId} role="status" className="min-h-5 basis-full text-muted-foreground">
         {confirming &&
           `${MERGE_LABELS[method]} for ${detail.repo}#${detail.number} into ${detail.baseRef}?`}
       </p>

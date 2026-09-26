@@ -28,7 +28,9 @@ async function sizePane(page: Page, desiredWidth: number) {
 async function openInbox(page: Page) {
   await signIn(page)
   await page.goto("/#/inbox")
-  await page.getByRole("button", { name: /Speed up the diff view/ }).click()
+  await page
+    .getByRole("button", { name: "acme/api #7: Speed up the diff view", exact: true })
+    .click()
   await expect(page.locator(".pull-content-body")).toBeVisible()
 }
 
