@@ -27,13 +27,7 @@ test("finds the groups that contain matches", () => {
 })
 
 test("marks matches across styled segments, case-insensitively", () => {
-  const marked = markMatches(
-    [
-      { text: "Error: ", fg: "red" },
-      { text: "some error here" },
-    ],
-    "error",
-  )
+  const marked = markMatches([{ text: "Error: ", fg: "red" }, { text: "some error here" }], "error")
   expect(marked.map((s) => [s.text, s.match, s.fg])).toEqual([
     ["Error", true, "red"],
     [": ", false, "red"],
