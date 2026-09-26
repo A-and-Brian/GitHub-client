@@ -101,7 +101,27 @@ const json = (route: Route, body: unknown) =>
   route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
 
 /** Serves a small, fixed GitHub account so UI tests need no network or token. */
-export async function fakeGitHub(page: Page) {
+export async function fakeGitHub(
+  page: Page,
+  options: {
+    hierarchy?: boolean
+    checkState?: string
+    admin?: boolean
+    settingsError?: number
+  } = {},
+) {
+  const settings = {
+    description: "API service",
+    homepage: "https://example.com",
+    has_issues: true,
+    has_wiki: true,
+    allow_squash_merge: true,
+    allow_rebase_merge: true,
+    allow_merge_commit: true,
+    delete_branch_on_merge: false,
+    permissions: { admin: options.admin ?? true },
+  }
+
   const requests: Array<{ method: string; path: string; body: unknown }> = []
   await page.route("https://api.github.com/**", async (route) => {
     const request = route.request()
@@ -110,14 +130,75 @@ export async function fakeGitHub(page: Page) {
     requests.push({ method: request.method(), path: url.pathname, body })
     if (url.pathname === "/user") return json(route, user)
     if (url.pathname === "/user/orgs") return json(route, [{ login: "acme" }])
-    if (url.pathname === "/user/teams") return json(route, [])
+    if (url.pathname === "/user/teams")
+      return json(
+        route,
+        options.hierarchy
+          ? [
+              {
+                name: "Engineering",
+                slug: "engineering",
+                organization: { login: "acme" },
+                parent: null,
+              },
+              {
+                name: "Backend",
+                slug: "backend",
+                organization: { login: "acme" },
+                parent: { slug: "engineering", name: "Engineering" },
+              },
+            ]
+          : [],
+      )
+    if (/^\/orgs\/acme\/teams\/[^/]+\/repos$/.test(url.pathname))
+      return json(route, [
+        {
+          full_name: "acme/api",
+          name: "api",
+          owner: { login: "acme" },
+          private: true,
+          archived: false,
+          default_branch: "main",
+          pushed_at: null,
+        },
+      ])
+    if (url.pathname === "/repos/acme/api") {
+      if (request.method() === "PATCH") {
+        if (options.settingsError)
+          return route.fulfill({
+            status: options.settingsError,
+            contentType: "application/json",
+            body: JSON.stringify({ message: "Organization policy prevents this change" }),
+          })
+        Object.assign(settings, body)
+      }
+      return json(route, settings)
+    }
     if (url.pathname === "/user/starred") return json(route, [])
     if (url.pathname === "/graphql") {
       const query = String((body as { query?: string })?.query ?? "")
       if (query.includes("SearchPulls")) {
         return json(route, {
           data: {
-            search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [pullNode] },
+            search: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                {
+                  ...pullNode,
+                  headRefOid: "abc123",
+                  commits: {
+                    nodes: [
+                      {
+                        commit: {
+                          oid: "abc123",
+                          statusCheckRollup: { state: options.checkState ?? "SUCCESS" },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
           },
         })
       }

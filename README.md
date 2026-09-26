@@ -6,7 +6,9 @@ Status: v1 in development. See `.claude/plans/` for the product plan and the v1 
 
 ## Features (v1)
 
-- Automatic groups: pull requests involving you, each organization, each of your teams, and starred repositories.
+- Automatic groups: pull requests involving you, organizations with nested parent/child teams, and starred repositories.
+- A PR inbox with a side-by-side detail pane, local snooze/settle/restore controls, and failures across all states. Local state survives restart; settling does not close or merge the GitHub PR.
+- Repository settings: edit description, homepage, issues/wiki, merge methods, and automatic branch deletion with GitHub admin permission.
 - Pull request lists per group with CI state, review decision, labels, and filters (all open, review requested, mine).
 - Pull request page: conversation, checks, merge, comments, and reviews.
 - Diff review with inline threads, draft comments, and suggestions.

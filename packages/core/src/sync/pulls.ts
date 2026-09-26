@@ -30,7 +30,7 @@ const SEARCH_PULLS = /* GraphQL */ `
           reviewRequests(first: 10) {
             nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } }
           }
-          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
         }
       }
     }
@@ -57,7 +57,11 @@ export interface SearchPullNode {
   reviewRequests: {
     nodes: Array<{ requestedReviewer: { login?: string; combinedSlug?: string } | null }>
   }
-  commits: { nodes: Array<{ commit: { statusCheckRollup: { state: CheckState } | null } }> }
+  commits: {
+    nodes: Array<{
+      commit: { oid?: string; statusCheckRollup: { state: CheckState } | null }
+    }>
+  }
 }
 
 interface SearchResult {
@@ -81,6 +85,7 @@ export function toPullRequest(groupId: string, node: SearchPullNode): PullReques
     isDraft: node.isDraft,
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
+    headOid: node.commits.nodes[0]?.commit.oid,
     headRef: node.headRefName,
     baseRef: node.baseRefName,
     reviewDecision: node.reviewDecision,
@@ -101,6 +106,7 @@ export async function syncGroupPulls(
   group: Group,
   pulls: SyncedCollection<PullRequest, string>,
 ): Promise<void> {
+  await pulls.collection.preload()
   const rows: PullRequest[] = []
   for (const q of groupSearchQueries(group)) {
     let cursor: string | null = null
@@ -115,6 +121,18 @@ export async function syncGroupPulls(
       if (!result.search.pageInfo.hasNextPage) break
       cursor = result.search.pageInfo.endCursor
     }
+  }
+  const syncedAt = new Date().toISOString()
+  for (const row of rows) {
+    const existing = pulls.collection.get(row.key)
+    const comparable = (value: PullRequest) =>
+      Object.fromEntries(
+        Object.entries(value).filter(([key]) => key !== "syncedAt" && !key.startsWith("$")),
+      )
+    row.syncedAt =
+      existing && JSON.stringify(comparable(existing)) === JSON.stringify(comparable(row))
+        ? existing.syncedAt
+        : syncedAt
   }
   await pulls.replace(rows, (row) => row.groupId === group.id)
 }

@@ -2,10 +2,18 @@ import * as reviews from "./actions/reviews"
 import * as workflows from "./actions/workflows"
 import { checkToken, TokenAuthProvider, type TokenCheck } from "./auth/auth"
 import { type Collections, createCollections } from "./collections"
-import type { MergeMethod } from "./domain/types"
+import type { Group, MergeMethod, PullRequest } from "./domain/types"
 import { prKey } from "./domain/types"
 import { GraphQLClient } from "./github/graphql"
 import { RestClient } from "./github/rest"
+import {
+  type InboxPreference,
+  reconcileInboxState as reconcileInboxPreferences,
+  restoreInboxPreference as restoreInboxPreferenceRow,
+  restoreInboxPull as restoreInboxPullState,
+  setInboxSnoozed as setInboxSnoozedState,
+  settleInboxPull as settleInboxPullState,
+} from "./inbox"
 import type { Platform } from "./platform"
 import { syncRunJobs, syncWorkflowRuns, syncWorkflows, toWorkflowRun } from "./sync/actions"
 import { syncGroups } from "./sync/groups"
@@ -64,6 +72,42 @@ export class GitHubClient {
     await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
     const draftIds = [...drafts.keys()]
     if (draftIds.length > 0) await drafts.delete(draftIds).isPersisted.promise
+  }
+
+  setInboxSnoozed(accountLogin: string, pull: PullRequest, until: string) {
+    return setInboxSnoozedState(this.collections.inboxPreferences, accountLogin, pull, until)
+  }
+
+  settleInboxPull(accountLogin: string, pull: PullRequest) {
+    return settleInboxPullState(this.collections.inboxPreferences, accountLogin, pull)
+  }
+
+  restoreInboxPull(accountLogin: string, pull: PullRequest) {
+    return restoreInboxPullState(this.collections.inboxPreferences, accountLogin, pull)
+  }
+
+  restoreInboxPreference(accountLogin: string, pullId: string, previous?: InboxPreference) {
+    return restoreInboxPreferenceRow(
+      this.collections.inboxPreferences,
+      accountLogin,
+      pullId,
+      previous,
+    )
+  }
+
+  reconcileInboxState(
+    accountLogin: string,
+    pulls: readonly PullRequest[],
+    now = Date.now(),
+    groups: readonly Group[] = [...this.collections.groups.collection.values()],
+  ) {
+    return reconcileInboxPreferences(
+      this.collections.inboxPreferences,
+      accountLogin,
+      pulls,
+      now,
+      groups,
+    )
   }
 
   /** Starts background sync of groups and of every group's pull requests. */

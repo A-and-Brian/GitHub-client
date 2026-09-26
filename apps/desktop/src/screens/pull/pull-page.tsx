@@ -4,7 +4,7 @@ import { Tabs, TabsList, TabsTrigger } from "@github-client/ui/components/tabs"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { pullRoute } from "@/app/router"
@@ -22,11 +22,44 @@ export function PullPage() {
   const { owner, repo: name, number: numberParam } = pullRoute.useParams()
   const { tab } = pullRoute.useSearch()
   const navigate = useNavigate()
+  return (
+    <PullContent
+      owner={owner}
+      name={name}
+      number={Number(numberParam)}
+      tab={tab}
+      onBack={() => window.history.back()}
+      onTabChange={(next) =>
+        void navigate({
+          to: "/pr/$owner/$repo/$number",
+          params: { owner, repo: name, number: numberParam },
+          search: { tab: next },
+          replace: true,
+        })
+      }
+    />
+  )
+}
+
+/** Shared detail pane for the full PR page and the inbox. */
+export function PullContent({
+  owner,
+  name,
+  number,
+  tab,
+  onTabChange,
+  onBack,
+}: {
+  owner: string
+  name: string
+  number: number
+  tab: PullTab
+  onTabChange: (tab: PullTab) => void
+  onBack: () => void
+}) {
   const client = useClient()
   const repo = `${owner}/${name}`
-  const number = Number(numberParam)
   const key = prKey(repo, number)
-
   useWatch((c) => c.watchPull(repo, number), [repo, number])
   const status = useJobStatus(jobKeys.pull(repo, number))
   const detail = useLiveQuery(
@@ -34,17 +67,10 @@ export function PullPage() {
       q.from({ d: client.collections.pullDetails.collection }).where(({ d }) => eq(d.key, key)),
     [key],
   ).data[0]
-
-  const setTab = (next: PullTab) =>
-    navigate({
-      to: "/pr/$owner/$repo/$number",
-      params: { owner, repo: name, number: numberParam },
-      search: { tab: next },
-      replace: true,
-    })
+  const setTab = onTabChange
 
   useShortcuts({
-    Escape: () => window.history.back(),
+    Escape: onBack,
     "1": () => setTab("conversation"),
     "2": () => setTab("files"),
     "3": () => setTab("checks"),
@@ -53,21 +79,28 @@ export function PullPage() {
   })
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <header className="flex flex-col gap-2 border-b px-4 pt-3">
-        <div className="flex items-start gap-2">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Back"
-            onClick={() => window.history.back()}
-          >
+        <div className="flex flex-wrap items-start gap-2">
+          <Button variant="ghost" size="icon-sm" aria-label="Back" onClick={onBack}>
             <ArrowLeftIcon />
           </Button>
           {detail && (
             <PullStateIcon state={detail.state} isDraft={detail.isDraft} className="mt-1.5" />
           )}
           <div className="min-w-0 flex-1">
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-semibold break-all">
+                {repo} #{number}
+              </span>
+              <Link
+                to="/settings/$owner/$repo"
+                params={{ owner, repo: name }}
+                className="text-xs text-muted-foreground underline"
+              >
+                Repository settings
+              </Link>
+            </div>
             <h1 className="text-base font-semibold leading-snug">
               {detail?.title ?? `${repo}#${number}`}{" "}
               <span className="font-normal text-muted-foreground">#{number}</span>
@@ -113,11 +146,12 @@ export function PullPage() {
           </TabsList>
         </Tabs>
       </header>
-      {status?.error && !detail ? (
+      {status?.error ? (
         <p className="p-6 text-sm text-destructive">
           Could not load: {String((status.error as Error).message ?? status.error)}
         </p>
-      ) : !detail ? (
+      ) : null}
+      {!detail ? (
         <p className="p-6 text-sm text-muted-foreground">Loading…</p>
       ) : (
         <div className="min-h-0 flex-1">

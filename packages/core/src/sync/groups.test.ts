@@ -22,7 +22,14 @@ test("builds me, org, team, and starred groups", async () => {
     { path: "/user/orgs?per_page=100", body: [{ login: "zeta" }, { login: "acme" }] },
     {
       path: "/user/teams?per_page=100",
-      body: [{ name: "Core", slug: "core", organization: { login: "acme" } }],
+      body: [
+        {
+          name: "Core",
+          slug: "core",
+          organization: { login: "acme" },
+          parent: { name: "Engineering", slug: "engineering" },
+        },
+      ],
     },
     { path: "/user/starred?per_page=100", body: [repo("oss/lib")] },
     {
@@ -49,7 +56,46 @@ test("builds me, org, team, and starred groups", async () => {
     "acme/api",
     "acme/web",
   ])
+  expect(collections.groups.collection.get("team:acme/core")).toMatchObject({
+    parentSlug: "engineering",
+    parentName: "Engineering",
+  })
   expect(collections.repos.collection.has("oss/lib")).toBe(true)
+})
+
+test("discovers organizations and teams across REST pages without conflating same-named teams", async () => {
+  const orgPage2 = "https://api.github.com/user/orgs?per_page=100&page=2"
+  const teamPage2 = "https://api.github.com/user/teams?per_page=100&page=2"
+  const gh = fakeGitHub([
+    {
+      path: "/user/orgs?per_page=100",
+      body: [{ login: "acme" }],
+      headers: { Link: `<${orgPage2}>; rel="next"` },
+    },
+    { path: "/user/orgs?per_page=100&page=2", body: [{ login: "other" }] },
+    {
+      path: "/user/teams?per_page=100",
+      body: [{ name: "Core", slug: "core", organization: { login: "acme" } }],
+      headers: { Link: `<${teamPage2}>; rel="next"` },
+    },
+    {
+      path: "/user/teams?per_page=100&page=2",
+      body: [{ name: "Core", slug: "core", organization: { login: "other" } }],
+    },
+    { path: "/user/starred?per_page=100", body: [] },
+    { path: "/orgs/acme/teams/core/repos?per_page=100", body: [] },
+    { path: "/orgs/other/teams/core/repos?per_page=100", body: [] },
+  ])
+  const collections = createCollections()
+  await syncGroups(
+    new RestClient({ fetch: gh.fetch, getToken: () => "t" }),
+    collections.groups,
+    collections.repos,
+  )
+  expect(collections.groups.collection.has("org:other")).toBe(true)
+  expect(collections.groups.collection.has("team:acme/core")).toBe(true)
+  expect(collections.groups.collection.has("team:other/core")).toBe(true)
+  expect(gh.requests.map((request) => request.path)).toContain("/user/teams?per_page=100&page=2")
 })
 
 test("search queries stay under GitHub's length limit", () => {

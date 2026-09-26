@@ -14,6 +14,7 @@ import type {
   Workflow,
   WorkflowRun,
 } from "../domain/types"
+import type { InboxPreference } from "../inbox"
 import { createSyncedCollection } from "./synced"
 
 export type { SyncedCollection } from "./synced"
@@ -30,6 +31,7 @@ export function createCollections(persistence?: PersistedCollectionPersistence) 
     groups: synced<Group, string>("groups", (g) => g.id),
     repos: synced<Repo, string>("repos", (r) => r.fullName),
     pulls: synced<PullRequest, string>("pulls", (p) => p.key),
+    inboxPreferences: synced<InboxPreference, string>("inbox-preferences", (p) => p.key),
     pullDetails: synced<PullRequestDetail, string>("pull-details", (p) => p.key),
     pullFiles: synced<PullRequestFiles, string>("pull-files", (p) => p.key),
     workflowRuns: synced<WorkflowRun, number>("workflow-runs", (r) => r.id),
