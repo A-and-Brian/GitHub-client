@@ -27,7 +27,7 @@ const PULL_DETAIL = /* GraphQL */ `
         mergeable mergeStateStatus reviewDecision viewerCanUpdate
         additions deletions changedFiles
         ${ACTOR}
-        timelineItems(last: 200, itemTypes: [
+        timelineItems(last: 100, itemTypes: [
           ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, LABELED_EVENT, UNLABELED_EVENT,
           MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT,
           REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT

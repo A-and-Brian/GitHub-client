@@ -29,7 +29,21 @@ describe("RestClient", () => {
     const rest = client(gh.fetch)
 
     expect(await rest.pollAll<number>("/user/starred")).toEqual({ status: "ok", data: [1, 2, 3] })
-    expect(await rest.pollAll<number>("/user/starred")).toEqual({ status: "not-modified" })
+    // Later pages may change while page 1 does not, so a multi-page list is fetched again.
+    expect(await rest.pollAll<number>("/user/starred")).toEqual({ status: "ok", data: [1, 2, 3] })
+
+    const sorted = { recencySorted: true }
+    await rest.pollAll<number>("/user/starred", {}, sorted)
+    expect(await rest.pollAll<number>("/user/starred", {}, sorted)).toEqual({
+      status: "not-modified",
+    })
+  })
+
+  test("pollAll trusts the ETag of a single-page list", async () => {
+    const gh = fakeGitHub([{ path: "/x?per_page=100", body: [1], etag: '"a"' }])
+    const rest = client(gh.fetch)
+    await rest.pollAll<number>("/x")
+    expect(await rest.pollAll<number>("/x")).toEqual({ status: "not-modified" })
   })
 
   test("exposes the server poll interval", async () => {

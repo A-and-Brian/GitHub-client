@@ -167,6 +167,7 @@ function MergeBox({ detail }: { detail: PullRequestDetail }) {
   const blocked = detail.isDraft || detail.mergeable === "CONFLICTING"
 
   const merge = async () => {
+    if (busy) return
     if (!window.confirm(`${MERGE_LABELS[method]} ${detail.repo}#${detail.number}?`)) return
     setBusy(true)
     try {
@@ -215,6 +216,8 @@ function CommentBox({ detail }: { detail: PullRequestDetail }) {
   const [busy, setBusy] = useState(false)
 
   const send = async () => {
+    // Keyboard submits bypass the disabled button, so guard here too.
+    if (busy) return
     if (!body.trim()) return
     setBusy(true)
     try {

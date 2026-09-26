@@ -14,6 +14,8 @@ export interface DraftComment {
   startLine: number | null
   side: "LEFT" | "RIGHT"
   body: string
+  /** Head commit when the draft was written; its line numbers refer to that commit's diff. */
+  commitId: string
   createdAt: string
 }
 

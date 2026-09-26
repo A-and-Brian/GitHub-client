@@ -5,11 +5,10 @@ import { RouterProvider } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { SessionContext } from "@/app/client"
 import { createAppRouter } from "@/app/router"
+import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { useTheme } from "@/components/theme-provider"
 import { createPlatform } from "@/platform"
 import { Setup } from "@/screens/setup"
-
-const VIEWER_KEY = "github-client.viewer"
 
 // One client per app. Created outside React so StrictMode's double effects
 // cannot open the same SQLite collections twice.
@@ -34,7 +33,8 @@ export function Boot() {
     let cancelled = false
     ;(async () => {
       const client = await getClient()
-      if (!(await client.auth.restore())) return { phase: "setup", client } as State
+      const allowEnv = localStorage.getItem(SIGNED_OUT_KEY) === null
+      if (!(await client.auth.restore({ allowEnv }))) return { phase: "setup", client } as State
       try {
         const viewer = await client.rest.get<{
           login: string
@@ -87,6 +87,7 @@ export function Boot() {
 }
 
 function ready(client: GitHubClient, viewer: Viewer): State {
+  localStorage.removeItem(SIGNED_OUT_KEY)
   localStorage.setItem(VIEWER_KEY, JSON.stringify(viewer))
   client.startSync()
   return { phase: "ready", client, viewer }

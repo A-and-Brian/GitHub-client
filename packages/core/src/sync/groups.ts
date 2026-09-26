@@ -40,10 +40,11 @@ export async function syncGroups(
   const [orgs, teams, starred] = await Promise.all([
     rest.get<Array<{ login: string }>>("/user/orgs", { per_page: 100 }),
     rest.get<RestTeam[]>("/user/teams", { per_page: 100 }),
-    rest.pollAll<RestRepo>("/user/starred", {}, { maxPages: 10 }),
+    rest.pollAll<RestRepo>("/user/starred", {}, { maxPages: 10, recencySorted: true }),
   ])
 
-  const teamRepos = await Promise.all(
+  // One inaccessible team (for example behind SAML SSO) must not stop the other groups.
+  const teamRepos = await Promise.allSettled(
     teams.map((team) =>
       rest.pollAll<RestRepo>(`/orgs/${team.organization.login}/teams/${team.slug}/repos`, {}),
     ),
@@ -60,8 +61,9 @@ export async function syncGroups(
   const knownRepos: Repo[] = []
   teams.forEach((team, i) => {
     const id = `team:${team.organization.login}/${team.slug}`
-    const result = teamRepos[i]!
-    const list = result.status === "ok" ? result.data.map(toRepo) : undefined
+    const settled = teamRepos[i]!
+    const result = settled.status === "fulfilled" ? settled.value : undefined
+    const list = result?.status === "ok" ? result.data.map(toRepo) : undefined
     if (list) knownRepos.push(...list)
     next.push({
       id,
@@ -69,7 +71,7 @@ export async function syncGroups(
       name: `${team.organization.login}/${team.name}`,
       org: team.organization.login,
       order: 1000 + i,
-      // An unchanged list keeps the repos already stored for the group.
+      // An unchanged or unreadable list keeps the repos already stored for the group.
       repos: list?.map((r) => r.fullName) ?? groups.collection.get(id)?.repos ?? [],
     })
   })

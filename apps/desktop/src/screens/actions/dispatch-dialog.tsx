@@ -107,6 +107,8 @@ export function DispatchDialog({
   }, [client, repo, open, path, branch])
 
   const submit = async () => {
+    // Keyboard submits bypass the disabled button, so guard here too.
+    if (busy) return
     if (!workflow || inputs.status !== "ready") return
     const payload = dispatchPayload(inputs.inputs, values)
     if (!payload.ok) return setErrors(payload.errors)

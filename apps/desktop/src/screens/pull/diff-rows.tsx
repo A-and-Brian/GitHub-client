@@ -287,21 +287,35 @@ export function ThreadCard({
   )
 }
 
+// Rows unmount when they scroll out of the virtualized list; unsent replies live here instead.
+const pendingReplies = new Map<string, string>()
+
 function ReplyBox({ detail, thread }: { detail: PullRequestDetail; thread: ReviewThread }) {
   const client = useClient()
-  const [open, setOpen] = useState(false)
-  const [body, setBody] = useState("")
+  const [open, setOpenState] = useState(() => pendingReplies.has(thread.id))
+  const [body, setBodyState] = useState(() => pendingReplies.get(thread.id) ?? "")
   const [busy, setBusy] = useState(false)
+  const setBody = (next: string) => {
+    setBodyState(next)
+    pendingReplies.set(thread.id, next)
+  }
+  const setOpen = (next: boolean) => {
+    setOpenState(next)
+    if (next) pendingReplies.set(thread.id, body)
+    else pendingReplies.delete(thread.id)
+  }
   const first = thread.comments[0]
   if (!first) return null
 
   const send = async () => {
+    // Keyboard submits bypass the disabled button, so guard here too.
+    if (busy) return
     if (!body.trim()) return
     setBusy(true)
     try {
       // Replies go to the thread's first comment; GitHub rejects replies to replies.
       await client.reply(detail.repo, detail.number, first.databaseId, body)
-      setBody("")
+      setBodyState("")
       setOpen(false)
     } catch (e) {
       toast.error(`Reply failed: ${e instanceof Error ? e.message : e}`)

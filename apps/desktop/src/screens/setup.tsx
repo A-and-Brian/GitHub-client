@@ -40,6 +40,12 @@ export function Setup({
     }
   }
 
+  const useEnvToken = async () => {
+    const envToken = await client.platform.envToken?.()
+    if (envToken) await signIn(envToken)
+    else setProblem("GITHUB_TOKEN is not set in the environment the app was started from.")
+  }
+
   const importFromGh = async () => {
     const ghToken = await client.platform.ghToken?.()
     if (ghToken) await signIn(ghToken)
@@ -90,6 +96,11 @@ export function Setup({
           {client.platform.ghToken && (
             <Button type="button" variant="outline" disabled={busy} onClick={importFromGh}>
               Use GitHub CLI token
+            </Button>
+          )}
+          {client.platform.envToken && (
+            <Button type="button" variant="outline" disabled={busy} onClick={useEnvToken}>
+              Use GITHUB_TOKEN
             </Button>
           )}
           <Button type="button" variant="ghost" onClick={() => openExternal(NEW_TOKEN_URL)}>

@@ -7,7 +7,7 @@ import { parseDispatchInputs } from "./workflows"
 test("submits a review with single-line and multi-line comments", async () => {
   const gh = fakeGitHub([{ method: "POST", path: "/repos/acme/api/pulls/5/reviews", body: {} }])
   const rest = new RestClient({ fetch: gh.fetch, getToken: () => "t" })
-  const base = { prKey: "acme/api#5", path: "src/a.ts", createdAt: "" }
+  const base = { prKey: "acme/api#5", path: "src/a.ts", commitId: "abc", createdAt: "" }
 
   await submitReview(rest, {
     repo: "acme/api",

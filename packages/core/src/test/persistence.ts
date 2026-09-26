@@ -9,6 +9,7 @@ export function tempDatabase() {
   const file = join(mkdtempSync(join(tmpdir(), "github-client-")), "db.sqlite")
   const opened: Database.Database[] = []
   return {
+    file,
     open() {
       const database = new Database(file)
       opened.push(database)

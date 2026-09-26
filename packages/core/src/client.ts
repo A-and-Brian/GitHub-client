@@ -56,9 +56,14 @@ export class GitHubClient {
     return check
   }
 
+  /** Forgets the token and deletes cached data, which belongs to the signed-out account. */
   async signOut(): Promise<void> {
-    await this.auth.signOut()
     this.poller.stop()
+    await this.auth.signOut()
+    const { drafts, ...synced } = this.collections
+    await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
+    const draftIds = [...drafts.keys()]
+    if (draftIds.length > 0) await drafts.delete(draftIds).isPersisted.promise
   }
 
   /** Starts background sync of groups and of every group's pull requests. */
@@ -176,10 +181,17 @@ export class GitHubClient {
     const detail = this.collections.pullDetails.collection.get(key)
     if (!detail) throw new Error(`Pull request ${key} is not loaded`)
     const drafts = [...this.collections.drafts.values()].filter((d) => d.prKey === key)
+    // One review has one commit; drafts from different pushes cannot be sent together.
+    const commits = new Set(drafts.map((d) => d.commitId ?? detail.headOid))
+    if (commits.size > 1) {
+      throw new Error(
+        "Draft comments were written on different commits. Delete or rewrite the outdated drafts.",
+      )
+    }
     await reviews.submitReview(this.rest, {
       repo,
       number,
-      commitId: detail.headOid,
+      commitId: [...commits][0] ?? detail.headOid,
       event,
       body,
       comments: drafts,
@@ -189,9 +201,13 @@ export class GitHubClient {
     await this.refresh(jobKeys.pull(repo, number))
   }
 
-  addDraft(draft: Omit<reviews.DraftComment, "id" | "createdAt">): void {
+  addDraft(draft: Omit<reviews.DraftComment, "id" | "createdAt" | "commitId">): void {
+    // The diff on screen comes from the files list, which can lag behind the detail.
+    const files = this.collections.pullFiles.collection.get(draft.prKey)
+    if (!files) throw new Error(`Files of ${draft.prKey} are not loaded`)
     this.collections.drafts.insert({
       ...draft,
+      commitId: files.headOid,
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
     })

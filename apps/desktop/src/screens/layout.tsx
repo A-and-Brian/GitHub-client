@@ -14,6 +14,7 @@ import { BuildingIcon, SearchIcon, StarIcon, UserIcon, UsersIcon } from "lucide-
 import { useState, useSyncExternalStore } from "react"
 import { useClient, useJobStatus, useSession } from "@/app/client"
 import { useShortcuts } from "@/app/shortcuts"
+import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { UserAvatar } from "@/components/avatar"
 import { CommandPalette } from "@/screens/command-palette"
 
@@ -82,6 +83,8 @@ export function Layout() {
             <DropdownMenuContent align="start">
               <DropdownMenuItem
                 onClick={async () => {
+                  localStorage.setItem(SIGNED_OUT_KEY, "1")
+                  localStorage.removeItem(VIEWER_KEY)
                   await client.signOut()
                   window.location.reload()
                 }}

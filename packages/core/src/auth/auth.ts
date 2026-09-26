@@ -9,7 +9,7 @@ import type { Platform } from "../platform"
 export interface AuthProvider {
   getToken(): string | null
   /** Loads a stored token. Returns false when none is available. */
-  restore(): Promise<boolean>
+  restore(options?: { allowEnv?: boolean }): Promise<boolean>
   signIn(token: string): Promise<void>
   signOut(): Promise<void>
 }
@@ -30,14 +30,15 @@ export class TokenAuthProvider implements AuthProvider {
     return this.token
   }
 
-  async restore(): Promise<boolean> {
+  /** `allowEnv: false` skips `GITHUB_TOKEN`, so an explicit sign-out stays signed out. */
+  async restore({ allowEnv = true }: { allowEnv?: boolean } = {}): Promise<boolean> {
     const stored = await this.platform.secrets.get()
     if (stored) {
       this.token = stored
       this.source = "stored"
       return true
     }
-    const env = await this.platform.envToken?.()
+    const env = allowEnv ? await this.platform.envToken?.() : null
     if (env) {
       this.token = env
       this.source = "env"

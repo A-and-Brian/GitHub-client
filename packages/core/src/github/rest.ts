@@ -69,14 +69,14 @@ export class RestClient {
   }
 
   /**
-   * Conditional GET over all pages (`Link: rel="next"`).
-   * Only the first page is conditional: lists here are sorted by recency, so an
-   * unchanged first page means an unchanged list.
+   * GET over all pages (`Link: rel="next"`). Only the first page can be
+   * conditional, so an unchanged first page proves an unchanged list only when
+   * the list fits on one page, or when it is sorted newest first (`recencySorted`).
    */
   async pollAll<T>(
     path: string,
     query?: Query,
-    options: { maxPages?: number; pick?: (page: unknown) => T[] } = {},
+    options: { maxPages?: number; pick?: (page: unknown) => T[]; recencySorted?: boolean } = {},
   ): Promise<GetResult<T[]>> {
     const pick = options.pick ?? ((page) => page as T[])
     const first = this.url(path, { per_page: 100, ...query })
@@ -85,6 +85,7 @@ export class RestClient {
     const pollIntervalSec = numberHeader(response, "X-Poll-Interval")
     if (response.status === 304) return { status: "not-modified", pollIntervalSec }
     const firstEtag = response.headers.get("ETag")
+    const firstResponse = response
     const items: T[] = pick(await response.json())
     let next = nextLink(response)
     for (let page = 1; next && page < (options.maxPages ?? 30); page++) {
@@ -92,7 +93,9 @@ export class RestClient {
       items.push(...pick(await response.json()))
       next = nextLink(response)
     }
-    if (firstEtag) this.etags.set(first, firstEtag)
+    const singlePage = !nextLink(firstResponse)
+    if (firstEtag && (singlePage || options.recencySorted)) this.etags.set(first, firstEtag)
+    else this.etags.delete(first)
     return { status: "ok", data: items, pollIntervalSec }
   }
 

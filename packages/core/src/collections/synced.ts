@@ -74,7 +74,7 @@ export function createSyncedCollection<T extends object, K extends Key>(
     for (const row of rows) {
       const existing = collection.get(options.getKey(row))
       if (!existing) writer.write({ type: "insert", value: row })
-      else if (JSON.stringify(existing) !== JSON.stringify(row)) {
+      else if (JSON.stringify(withoutVirtualProps(existing)) !== JSON.stringify(row)) {
         writer.write({ type: "update", value: row })
       }
     }
@@ -99,4 +99,11 @@ export function createSyncedCollection<T extends object, K extends Key>(
         }
       }),
   }
+}
+
+/** TanStack DB adds `$synced`, `$origin`, and similar props to the rows it returns. */
+function withoutVirtualProps<T extends object>(row: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(row).filter(([key]) => !key.startsWith("$")),
+  ) as Partial<T>
 }

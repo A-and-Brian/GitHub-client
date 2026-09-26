@@ -42,6 +42,8 @@ export function ReviewButton({ detail }: { detail: PullRequestDetail }) {
   useShortcuts({ v: () => setOpen(true) }, !open)
 
   const submit = async () => {
+    // Keyboard submits bypass the disabled button, so guard here too.
+    if (busy) return
     setBusy(true)
     try {
       await client.submitReview(detail.repo, detail.number, event, body)
