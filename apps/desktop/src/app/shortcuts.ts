@@ -23,9 +23,15 @@ function keyName(event: KeyboardEvent): string {
 
 /**
  * Registers keyboard shortcuts while the component is mounted. Plain keys are
- * ignored while typing; `mod+` shortcuts always fire.
+ * ignored while typing; `mod+` shortcuts always fire. The first handler for a key
+ * wins; `priority` handlers run before all others (for example, Escape closing an
+ * open editor instead of leaving the page), whatever the mount order.
  */
-export function useShortcuts(shortcuts: Shortcuts, enabled = true): void {
+export function useShortcuts(
+  shortcuts: Shortcuts,
+  enabled = true,
+  { priority = false } = {},
+): void {
   const ref = useRef(shortcuts)
   ref.current = shortcuts
   useEffect(() => {
@@ -39,7 +45,7 @@ export function useShortcuts(shortcuts: Shortcuts, enabled = true): void {
       event.preventDefault()
       handler(event)
     }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [enabled])
+    window.addEventListener("keydown", onKeyDown, { capture: priority })
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: priority })
+  }, [enabled, priority])
 }

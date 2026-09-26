@@ -119,3 +119,29 @@
   --ansi-bright-cyan: #56d4dd;
   --ansi-bright-white: #f0f6fc;
 }
+
+/* Diff colors, close to the GitHub palette in both themes. */
+:root {
+  --diff-add: #e6ffec;
+  --diff-add-gutter: #ccffd8;
+  --diff-del: #ffebe9;
+  --diff-del-gutter: #ffd7d5;
+  --diff-hunk: #ddf4ff;
+  --diff-selected: rgb(255 223 93 / 0.4);
+}
+.dark {
+  --diff-add: rgb(46 160 67 / 0.15);
+  --diff-add-gutter: rgb(63 185 80 / 0.3);
+  --diff-del: rgb(248 81 73 / 0.12);
+  --diff-del-gutter: rgb(248 81 73 / 0.3);
+  --diff-hunk: rgb(56 139 253 / 0.12);
+  --diff-selected: rgb(187 128 9 / 0.35);
+}
+
+/* Shiki tokens carry both theme colors; the theme class picks one. */
+.diff-token {
+  color: var(--light);
+}
+.dark .diff-token {
+  color: var(--dark);
+}
