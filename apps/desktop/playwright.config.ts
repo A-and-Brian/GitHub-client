@@ -7,7 +7,8 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   use: { baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1400, height: 900 } },
   webServer: {
-    command: `bunx vite --host 127.0.0.1 --port ${PORT} --strictPort`,
+    // Vite's first-run dependency optimization reload can interrupt an E2E interaction.
+    command: `bun run build && bunx vite preview --host 127.0.0.1 --port ${PORT} --strictPort`,
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: false,
   },
