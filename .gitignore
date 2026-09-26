@@ -35,3 +35,7 @@ dist-ssr
 # rust / tauri
 target
 apps/desktop/src-tauri/gen
+
+# playwright
+test-results
+playwright-report

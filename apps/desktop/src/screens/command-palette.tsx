@@ -1,4 +1,5 @@
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -45,77 +46,81 @@ export function CommandPalette({
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="Go to" className="sm:max-w-xl">
-      <CommandInput placeholder="Pull requests, groups, repositories, commands…" />
-      <CommandList className="max-h-[60vh]">
-        <CommandEmpty>No results.</CommandEmpty>
-        <CommandGroup heading="Groups">
-          {groups.map((g) => (
+      <Command>
+        <CommandInput placeholder="Pull requests, groups, repositories, commands…" />
+        <CommandList className="max-h-[60vh]">
+          <CommandEmpty>No results.</CommandEmpty>
+          <CommandGroup heading="Groups">
+            {groups.map((g) => (
+              <CommandItem
+                key={g.id}
+                value={`group ${g.name}`}
+                onSelect={() =>
+                  run(() => navigate({ to: "/g/$groupId", params: { groupId: g.id } }))
+                }
+              >
+                {g.name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          <CommandGroup heading="Pull requests">
+            {uniquePulls.map((p) => {
+              const [owner, repo] = p.repo.split("/") as [string, string]
+              return (
+                <CommandItem
+                  key={p.id}
+                  value={`${p.repo}#${p.number} ${p.title}`}
+                  onSelect={() =>
+                    run(() =>
+                      navigate({
+                        to: "/pr/$owner/$repo/$number",
+                        params: { owner, repo, number: String(p.number) },
+                        search: { tab: "conversation" },
+                      }),
+                    )
+                  }
+                >
+                  <span className="truncate">{p.title}</span>
+                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                    {p.repo}#{p.number}
+                  </span>
+                </CommandItem>
+              )
+            })}
+          </CommandGroup>
+          <CommandGroup heading="Actions">
+            {repoNames.map((fullName) => {
+              const [owner, repo] = fullName.split("/") as [string, string]
+              return (
+                <CommandItem
+                  key={fullName}
+                  value={`actions ${fullName}`}
+                  onSelect={() =>
+                    run(() => navigate({ to: "/actions/$owner/$repo", params: { owner, repo } }))
+                  }
+                >
+                  <span className="truncate">{fullName}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">Workflow runs</span>
+                </CommandItem>
+              )
+            })}
+          </CommandGroup>
+          <CommandGroup heading="Commands">
             <CommandItem
-              key={g.id}
-              value={`group ${g.name}`}
-              onSelect={() => run(() => navigate({ to: "/g/$groupId", params: { groupId: g.id } }))}
+              value="toggle theme dark light"
+              onSelect={() => run(() => setTheme(theme === "dark" ? "light" : "dark"))}
             >
-              {g.name}
+              Toggle dark mode
             </CommandItem>
-          ))}
-        </CommandGroup>
-        <CommandGroup heading="Pull requests">
-          {uniquePulls.map((p) => {
-            const [owner, repo] = p.repo.split("/") as [string, string]
-            return (
-              <CommandItem
-                key={p.id}
-                value={`${p.repo}#${p.number} ${p.title}`}
-                onSelect={() =>
-                  run(() =>
-                    navigate({
-                      to: "/pr/$owner/$repo/$number",
-                      params: { owner, repo, number: String(p.number) },
-                      search: { tab: "conversation" },
-                    }),
-                  )
-                }
-              >
-                <span className="truncate">{p.title}</span>
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                  {p.repo}#{p.number}
-                </span>
-              </CommandItem>
-            )
-          })}
-        </CommandGroup>
-        <CommandGroup heading="Actions">
-          {repoNames.map((fullName) => {
-            const [owner, repo] = fullName.split("/") as [string, string]
-            return (
-              <CommandItem
-                key={fullName}
-                value={`actions ${fullName}`}
-                onSelect={() =>
-                  run(() => navigate({ to: "/actions/$owner/$repo", params: { owner, repo } }))
-                }
-              >
-                <span className="truncate">{fullName}</span>
-                <span className="ml-auto text-xs text-muted-foreground">Workflow runs</span>
-              </CommandItem>
-            )
-          })}
-        </CommandGroup>
-        <CommandGroup heading="Commands">
-          <CommandItem
-            value="toggle theme dark light"
-            onSelect={() => run(() => setTheme(theme === "dark" ? "light" : "dark"))}
-          >
-            Toggle dark mode
-          </CommandItem>
-          <CommandItem
-            value="refresh groups sync"
-            onSelect={() => run(() => void client.refresh("groups"))}
-          >
-            Refresh groups
-          </CommandItem>
-        </CommandGroup>
-      </CommandList>
+            <CommandItem
+              value="refresh groups sync"
+              onSelect={() => run(() => void client.refresh("groups"))}
+            >
+              Refresh groups
+            </CommandItem>
+          </CommandGroup>
+        </CommandList>
+      </Command>
     </CommandDialog>
   )
 }

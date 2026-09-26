@@ -134,7 +134,7 @@ export function GroupPulls() {
         ))}
         {visible.length === 0 && (
           <li className="p-8 text-center text-sm text-muted-foreground">
-            {status?.lastSuccess || pulls.length > 0
+            {group && (status?.lastSuccess || pulls.length > 0)
               ? "No open pull requests."
               : "Loading pull requests…"}
           </li>
