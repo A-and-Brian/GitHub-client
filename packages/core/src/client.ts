@@ -2,6 +2,7 @@ import * as reviews from "./actions/reviews"
 import * as workflows from "./actions/workflows"
 import { checkToken, TokenAuthProvider, type TokenCheck } from "./auth/auth"
 import { type Collections, createCollections } from "./collections"
+import { Contributions } from "./contributions"
 import type { Group, MergeMethod, PullRequest } from "./domain/types"
 import { prKey } from "./domain/types"
 import { GraphQLClient } from "./github/graphql"
@@ -42,6 +43,7 @@ export class GitHubClient {
   readonly auth: TokenAuthProvider
   readonly rest: RestClient
   readonly graphql: GraphQLClient
+  readonly contributions: Contributions
   readonly poller: Poller
   readonly collections: Collections
   readonly platform: Platform
@@ -52,6 +54,7 @@ export class GitHubClient {
     this.auth = new TokenAuthProvider(platform)
     this.rest = new RestClient({ fetch: platform.fetch, getToken: () => this.auth.getToken() })
     this.graphql = new GraphQLClient(this.rest)
+    this.contributions = new Contributions(this.graphql)
     this.poller = new Poller(this.rest.rateLimits)
     this.collections = createCollections(platform.persistence)
   }
@@ -61,6 +64,7 @@ export class GitHubClient {
     const probe = new RestClient({ fetch: this.platform.fetch, getToken: () => token })
     const check = await checkToken(probe)
     await this.auth.signIn(token)
+    this.contributions.reset()
     return check
   }
 
@@ -68,6 +72,7 @@ export class GitHubClient {
   async signOut(): Promise<void> {
     this.poller.stop()
     await this.auth.signOut()
+    this.contributions.reset()
     const { drafts, ...synced } = this.collections
     await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
     const draftIds = [...drafts.keys()]

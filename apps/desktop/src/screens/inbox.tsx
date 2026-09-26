@@ -10,16 +10,25 @@ import {
 } from "@github-client/ui/components/popover"
 import { cn } from "@github-client/ui/lib/utils"
 import { useLiveQuery } from "@tanstack/react-db"
-import { CheckIcon, ClockIcon, RefreshCwIcon, Undo2Icon } from "lucide-react"
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  InboxIcon,
+  InfoIcon,
+  RefreshCwIcon,
+  Undo2Icon,
+} from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { useShortcuts } from "@/app/shortcuts"
+import { ContributionCalendar } from "@/components/contribution-calendar"
 import { ReviewBadge, rollupState, StateIcon } from "@/components/status"
 import { RelativeTime } from "@/components/time"
+import { AccountSyncFooter, InboxScopeChooser } from "./layout"
 import { PullContent, type PullTab } from "./pull/pull-page"
-
-type View = "active" | "snoozed" | "settled" | "failures"
 
 export function Inbox() {
   const { client, viewer } = useSession()
@@ -28,7 +37,8 @@ export function Inbox() {
   const preferences = useLiveQuery((q) =>
     q.from({ p: client.collections.inboxPreferences.collection }),
   ).data
-  const [view, setView] = useState<View>("active")
+  const [failures, setFailures] = useState(false)
+  const [expanded, setExpanded] = useState({ snoozed: false, settled: false })
   const [scope, setScope] = useState<"involving" | "all">("involving")
   const [text, setText] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -72,171 +82,343 @@ export function Inbox() {
       ),
     [pulls, groups, viewer.login, preferences, now, scope],
   )
-  const visible = entries.filter(({ pull, state }) => {
-    if (
-      view === "failures" ? !["FAILURE", "ERROR"].includes(pull.checkState ?? "") : state !== view
-    )
-      return false
+  const matching = entries.filter(({ pull }) => {
     return `${pull.repo} #${pull.number} ${pull.title} ${pull.author ?? ""}`
       .toLowerCase()
       .includes(text.trim().toLowerCase())
   })
+  const failuresList = matching.filter(({ pull }) =>
+    ["FAILURE", "ERROR"].includes(pull.checkState ?? ""),
+  )
+  const activeEntries = matching.filter(({ state }) => state === "active")
+  const snoozedEntries = matching.filter(({ state }) => state === "snoozed")
+  const settledEntries = matching.filter(({ state }) => state === "settled")
+  const visible = failures ? failuresList : activeEntries
   const selected = entries.find((entry) => entry.pull.id === selectedId)
   const select = (pull: PullRequest) => {
     setSelectedId(pull.id)
     setTab("conversation")
   }
+  const navigable = failures
+    ? failuresList
+    : [
+        ...activeEntries,
+        ...(expanded.snoozed ? snoozedEntries : []),
+        ...(expanded.settled ? settledEntries : []),
+      ]
   const step = (direction: number) => {
-    const index = visible.findIndex((entry) => entry.pull.id === selectedId)
-    const next = visible[Math.max(0, Math.min(visible.length - 1, index + direction))]
+    const index = navigable.findIndex((entry) => entry.pull.id === selectedId)
+    const next = navigable[Math.max(0, Math.min(navigable.length - 1, index + direction))]
     if (next) select(next.pull)
   }
   useShortcuts({ j: () => step(1), k: () => step(-1), "/": () => search.current?.focus() })
 
   return (
-    <div className="flex h-full min-w-0 flex-col">
-      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-        <h1 className="font-semibold">PR inbox</h1>
-        <select
-          aria-label="Inbox scope"
-          className="rounded-md border bg-background px-2 py-1 text-sm"
-          value={scope}
-          onChange={(e) => {
-            setScope(e.target.value as typeof scope)
-            setSelectedId(null)
-          }}
-        >
-          <option value="involving">Involving me</option>
-          <option value="all">All synced PRs</option>
-        </select>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Refresh inbox"
-          className="ml-auto"
-          onClick={() =>
-            void Promise.all(groups.map((g) => client.refresh(jobKeys.groupPulls(g.id))))
-          }
-        >
-          <RefreshCwIcon className={cn(status?.running && "animate-spin")} />
-        </Button>
-      </header>
-      <p className="border-b px-4 py-2 text-xs text-muted-foreground">
-        {!online && "Offline · Showing cached PRs. "}PRs from synced groups. GitHub access and
-        result limits apply. Snooze and settle are private to this app.
-      </p>
-      <div className="flex min-h-0 flex-1">
-        <section
-          aria-label="Pull request inbox"
-          className={cn(
-            "min-h-0 w-full shrink-0 flex-col border-r lg:flex lg:w-80 xl:w-96",
-            selected ? "hidden" : "flex",
-          )}
-        >
-          <div className="flex flex-col gap-2 border-b p-3">
-            <fieldset className="flex flex-wrap gap-1" aria-label="Inbox state">
-              {(["active", "snoozed", "settled", "failures"] as const).map((state) => (
+    <div className="flex h-full min-w-0">
+      <aside
+        aria-label="Pull request inbox"
+        className={cn(
+          "flex min-h-0 w-full shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:w-[320px] lg:w-[340px]",
+          selected && "hidden md:flex",
+        )}
+      >
+        <header className="space-y-3 border-b p-3">
+          <h1 className="flex items-center gap-2 px-1 text-sm font-semibold">
+            <InboxIcon className="size-4" />
+            PR inbox
+          </h1>
+          <Popover>
+            <PopoverTrigger
+              render={
                 <Button
-                  key={state}
-                  size="sm"
-                  variant={view === state ? "secondary" : "ghost"}
-                  aria-pressed={view === state}
-                  onClick={() => {
-                    setView(state)
-                    setSelectedId(null)
-                  }}
-                >
-                  {state === "failures" ? "Failures" : state[0]!.toUpperCase() + state.slice(1)}
-                </Button>
-              ))}
-            </fieldset>
+                  variant="outline"
+                  className="h-8 w-full justify-start text-sm font-medium"
+                  aria-label="Browse inbox and groups"
+                />
+              }
+            >
+              Inbox <ChevronDownIcon className="ml-auto size-4 text-muted-foreground" />
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="max-h-[70vh] w-[min(300px,85vw)] overflow-y-auto p-2"
+            >
+              <PopoverTitle className="sr-only">Inbox and groups</PopoverTitle>
+              <InboxScopeChooser />
+            </PopoverContent>
+          </Popover>
+        </header>
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <select
+            aria-label="Inbox scope"
+            className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm"
+            value={scope}
+            onChange={(e) => {
+              setScope(e.target.value as typeof scope)
+              setSelectedId(null)
+            }}
+          >
+            <option value="involving">Involving me</option>
+            <option value="all">All synced PRs</option>
+          </select>
+          <Button
+            variant={failures ? "secondary" : "ghost"}
+            size="sm"
+            aria-pressed={failures}
+            onClick={() => setFailures((value) => !value)}
+          >
+            Failures
+          </Button>
+        </div>
+        {!online && (
+          <p role="status" className="border-b px-3 py-1.5 text-xs text-muted-foreground">
+            Offline · showing cached PRs.
+          </p>
+        )}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 border-b p-3">
             <Input
               ref={search}
               aria-label="Filter inbox"
-              placeholder="Filter PRs /"
+              placeholder="Filter PRs"
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
-            {view === "failures" && (
-              <p className="text-xs text-muted-foreground">
-                Failures across all states, including snoozed and settled.
-              </p>
-            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Refresh inbox"
+              onClick={() =>
+                void Promise.all(groups.map((g) => client.refresh(jobKeys.groupPulls(g.id))))
+              }
+            >
+              <RefreshCwIcon className={cn(status?.running && "animate-spin")} />
+            </Button>
+            <Popover>
+              <PopoverTrigger
+                render={<Button variant="ghost" size="icon-sm" aria-label="About this inbox" />}
+              >
+                <InfoIcon />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="max-w-64 text-sm text-muted-foreground">
+                {!online && <p>Offline · showing cached PRs.</p>}
+                <p>
+                  Local inbox for PRs from synced groups. GitHub access and result limits apply.
+                  Snooze and settle are private to this app.
+                </p>
+              </PopoverContent>
+            </Popover>
           </div>
-          <ul className="min-h-0 flex-1 overflow-y-auto">
+          {!failures && (
+            <h2 className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
+              Active <span className="ml-1 font-normal tabular-nums">{activeEntries.length}</span>
+            </h2>
+          )}
+          {failures && (
+            <p className="border-b px-3 py-2 text-xs text-muted-foreground">
+              Failures across all states, including snoozed and settled.
+            </p>
+          )}
+          <ul
+            aria-label={failures ? "Pull request failures" : "Active pull requests"}
+            className="min-h-[80px] min-w-0 flex-1 overflow-y-auto"
+          >
             {visible.map((entry) => (
-              <li key={entry.pull.id} className="border-b">
-                <button
-                  type="button"
-                  className={cn(
-                    "flex w-full flex-col gap-1.5 px-3 py-3 text-left text-sm hover:bg-accent/50 focus-visible:outline focus-visible:outline-ring",
-                    selectedId === entry.pull.id && "bg-accent",
-                  )}
-                  aria-current={selectedId === entry.pull.id ? "true" : undefined}
-                  onClick={() => select(entry.pull)}
-                >
-                  <span className="text-xs font-semibold break-all">
-                    {entry.pull.repo} #{entry.pull.number}
-                  </span>
-                  <span className="font-medium">
-                    {entry.pull.isDraft && "Draft: "}
-                    {entry.pull.title}
-                  </span>
-                  <span className="flex flex-wrap items-center gap-2 text-xs">
-                    <InboxCheck pull={entry.pull} now={now} online={online} />
-                    <ReviewBadge decision={entry.pull.reviewDecision} />
-                  </span>
-                  <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="capitalize">{entry.state}</span>
-                    {entry.state === "snoozed" && entry.preference?.snoozedUntil && (
-                      <span>Until {new Date(entry.preference.snoozedUntil).toLocaleString()}</span>
-                    )}
-                    <RelativeTime iso={entry.pull.updatedAt} />
-                  </span>
-                </button>
-              </li>
+              <InboxRow
+                key={entry.pull.id}
+                entry={entry}
+                selectedId={selectedId}
+                now={now}
+                online={online}
+                select={select}
+              />
             ))}
             {visible.length === 0 && (
               <li className="p-6 text-center text-sm text-muted-foreground">
                 {status?.running && !status.lastSuccess
                   ? "Loading pull requests…"
-                  : "No pull requests in this view."}
+                  : failures
+                    ? "No failed checks in this view."
+                    : "No active pull requests."}
               </li>
             )}
           </ul>
-        </section>
-        <section
-          aria-label="Selected pull request"
-          className={cn("min-h-0 min-w-0 flex-1 flex-col", selected ? "flex" : "hidden lg:flex")}
-        >
-          {selected ? (
-            <>
-              <InboxActions
-                key={selected.pull.id}
-                pull={selected.pull}
-                state={selected.state}
-                snoozedUntil={selected.preference?.snoozedUntil}
-              />
-              <div className="min-h-0 flex-1">
-                <PullContent
-                  key={selected.pull.id}
-                  owner={selected.pull.repo.split("/")[0]!}
-                  name={selected.pull.repo.split("/")[1]!}
-                  number={selected.pull.number}
-                  tab={tab}
-                  onTabChange={setTab}
-                  onBack={() => setSelectedId(null)}
-                />
-              </div>
-            </>
-          ) : (
-            <p className="m-auto p-6 text-center text-sm text-muted-foreground">
-              Select a PR to review its conversation, files and checks.
-            </p>
+          {!failures && (
+            <div className="min-h-0 max-h-[40%] shrink-0 overflow-y-auto border-t">
+              <InboxSection
+                title="Snoozed"
+                count={snoozedEntries.length}
+                hasItems={snoozedEntries.length > 0}
+                expanded={expanded.snoozed}
+                onToggle={() => setExpanded((value) => ({ ...value, snoozed: !value.snoozed }))}
+              >
+                {snoozedEntries.map((entry) => (
+                  <InboxRow
+                    key={entry.pull.id}
+                    entry={entry}
+                    selectedId={selectedId}
+                    now={now}
+                    online={online}
+                    select={select}
+                  />
+                ))}
+              </InboxSection>
+              <InboxSection
+                title="Settled"
+                count={settledEntries.length}
+                hasItems={settledEntries.length > 0}
+                expanded={expanded.settled}
+                onToggle={() => setExpanded((value) => ({ ...value, settled: !value.settled }))}
+              >
+                {settledEntries.map((entry) => (
+                  <InboxRow
+                    key={entry.pull.id}
+                    entry={entry}
+                    selectedId={selectedId}
+                    now={now}
+                    online={online}
+                    select={select}
+                  />
+                ))}
+              </InboxSection>
+            </div>
           )}
-        </section>
-      </div>
+        </div>
+        <ContributionCalendar />
+        <AccountSyncFooter />
+      </aside>
+      <section
+        aria-label="Selected pull request"
+        className={cn(
+          "flex min-w-0 flex-1 flex-col overflow-hidden",
+          !selected && "hidden md:flex",
+        )}
+      >
+        {selected && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <PullContent
+              key={selected.pull.id}
+              owner={selected.pull.repo.split("/")[0]!}
+              name={selected.pull.repo.split("/")[1]!}
+              number={selected.pull.number}
+              tab={tab}
+              onTabChange={setTab}
+              onBack={() => {
+                setSelectedId(null)
+                window.requestAnimationFrame(() => search.current?.focus())
+              }}
+              backLabel="Back to inbox"
+              actions={
+                <InboxActions
+                  pull={selected.pull}
+                  state={selected.state}
+                  snoozedUntil={selected.preference?.snoozedUntil}
+                />
+              }
+            />
+          </div>
+        )}
+        {!selected && (
+          <p className="m-auto max-w-sm p-6 text-center text-sm text-muted-foreground">
+            Select a PR to review its conversation, files and checks.
+          </p>
+        )}
+      </section>
     </div>
+  )
+}
+
+function InboxSection({
+  title,
+  count,
+  hasItems,
+  expanded,
+  onToggle,
+  children,
+}: {
+  title: string
+  count: number
+  hasItems: boolean
+  expanded: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <section className="border-b last:border-b-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-sidebar-accent"
+      >
+        {expanded ? (
+          <ChevronDownIcon className="size-4" />
+        ) : (
+          <ChevronRightIcon className="size-4" />
+        )}
+        {title}
+        <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
+      </button>
+      {expanded && (
+        <ul>
+          {hasItems ? (
+            children
+          ) : (
+            <li className="px-9 py-2 text-xs text-muted-foreground">
+              No {title.toLowerCase()} PRs
+            </li>
+          )}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function InboxRow({
+  entry,
+  selectedId,
+  now,
+  online,
+  select,
+}: {
+  entry: ReturnType<typeof deriveInboxPulls>[number]
+  selectedId: string | null
+  now: number
+  online: boolean
+  select: (pull: PullRequest) => void
+}) {
+  return (
+    <li className="border-b last:border-b-0">
+      <button
+        type="button"
+        className={cn(
+          "flex w-full flex-col gap-1.5 px-3 py-3 text-left text-sm hover:bg-sidebar-accent focus-visible:outline focus-visible:outline-ring",
+          selectedId === entry.pull.id && "bg-sidebar-accent",
+        )}
+        aria-current={selectedId === entry.pull.id ? "true" : undefined}
+        onClick={() => select(entry.pull)}
+      >
+        <span className="flex items-center justify-between gap-2 text-xs font-semibold">
+          <span className="truncate">{entry.pull.repo}</span>
+          <span className="shrink-0 text-muted-foreground">#{entry.pull.number}</span>
+        </span>
+        <span className="line-clamp-2 font-medium">
+          {entry.pull.isDraft && "Draft: "}
+          {entry.pull.title}
+        </span>
+        <span className="flex flex-wrap items-center gap-2 text-xs">
+          <InboxCheck pull={entry.pull} now={now} online={online} />
+          <ReviewBadge decision={entry.pull.reviewDecision} />
+        </span>
+        <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="capitalize">{entry.state}</span>
+          {entry.state === "snoozed" && entry.preference?.snoozedUntil && (
+            <span>Until {new Date(entry.preference.snoozedUntil).toLocaleString()}</span>
+          )}
+          <RelativeTime iso={entry.pull.updatedAt} />
+        </span>
+      </button>
+    </li>
   )
 }
 
@@ -327,7 +509,7 @@ function InboxActions({
     return date.getTime()
   }
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+    <div className="flex flex-wrap items-center gap-2 px-3 py-2">
       <span className="mr-auto text-xs text-muted-foreground">
         {state === "settled"
           ? "Settled locally · GitHub PR unchanged"

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { runRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
+import { RepositoryContext } from "@/components/repository-context"
 import { runState, StateIcon } from "@/components/status"
 import { duration, RelativeTime } from "@/components/time"
 import { openExternal } from "@/platform"
@@ -68,7 +69,8 @@ export function RunPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-start gap-2 border-b px-4 py-3">
+      <RepositoryContext owner={owner} repo={name} location={`Run ${runId}`} />
+      <header className="flex flex-wrap items-start gap-2 border-b px-4 py-3">
         <Button
           variant="ghost"
           size="icon-sm"
