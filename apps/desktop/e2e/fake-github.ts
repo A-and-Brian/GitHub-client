@@ -108,6 +108,12 @@ export async function fakeGitHub(
     checkState?: string
     admin?: boolean
     settingsError?: number
+    draft?: boolean
+    mergeable?: string
+    mergeMethods?: Array<"squash" | "merge" | "rebase">
+    mergeError?: number
+    mergeGate?: Promise<void>
+    headOid?: string
   } = {},
 ) {
   const settings = {
@@ -123,6 +129,7 @@ export async function fakeGitHub(
   }
 
   const requests: Array<{ method: string; path: string; body: unknown }> = []
+  let merged = false
   await page.route("https://api.github.com/**", async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -185,12 +192,12 @@ export async function fakeGitHub(
               nodes: [
                 {
                   ...pullNode,
-                  headRefOid: "abc123",
+                  headRefOid: options.headOid ?? "abc123",
                   commits: {
                     nodes: [
                       {
                         commit: {
-                          oid: "abc123",
+                          oid: options.headOid ?? "abc123",
                           statusCheckRollup: { state: options.checkState ?? "SUCCESS" },
                         },
                       },
@@ -202,7 +209,38 @@ export async function fakeGitHub(
           },
         })
       }
-      if (query.includes("PullDetail")) return json(route, { data: { repository: pullDetail } })
+      if (query.includes("PullDetail")) {
+        const detail = structuredClone(pullDetail)
+        detail.squashMergeAllowed = options.mergeMethods
+          ? options.mergeMethods.includes("squash")
+          : detail.squashMergeAllowed
+        detail.mergeCommitAllowed = options.mergeMethods
+          ? options.mergeMethods.includes("merge")
+          : detail.mergeCommitAllowed
+        detail.rebaseMergeAllowed = options.mergeMethods
+          ? options.mergeMethods.includes("rebase")
+          : detail.rebaseMergeAllowed
+        detail.pullRequest.isDraft = options.draft ?? detail.pullRequest.isDraft
+        detail.pullRequest.headRefOid = options.headOid ?? detail.pullRequest.headRefOid
+        detail.pullRequest.mergeable = options.mergeable ?? detail.pullRequest.mergeable
+        if (merged) detail.pullRequest.state = "MERGED"
+        return json(route, { data: { repository: detail } })
+      }
+    }
+    if (url.pathname === "/repos/acme/api/pulls/7/merge" && request.method() === "PUT") {
+      await options.mergeGate
+      if (options.mergeError)
+        return route.fulfill({
+          status: options.mergeError,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "Merge is blocked by repository policy" }),
+        })
+      merged = true
+      return json(route, {
+        sha: "merge123",
+        merged: true,
+        message: "Pull Request successfully merged",
+      })
     }
     if (url.pathname === "/repos/acme/api/pulls/7/files") return json(route, files)
     if (url.pathname === "/repos/acme/api/pulls/7/reviews" && request.method() === "POST") {
