@@ -6,7 +6,11 @@ interface GraphQLResponse<T> {
 }
 
 export class GraphQLClient {
-  constructor(private readonly rest: RestClient) {}
+  private readonly rest: RestClient
+
+  constructor(rest: RestClient) {
+    this.rest = rest
+  }
 
   async query<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
     const response = await this.rest.request<GraphQLResponse<T>>("POST", "/graphql", {

@@ -2,7 +2,7 @@ import * as reviews from "./actions/reviews"
 import * as workflows from "./actions/workflows"
 import { checkToken, TokenAuthProvider, type TokenCheck } from "./auth/auth"
 import { type Collections, createCollections } from "./collections"
-import type { Group, MergeMethod } from "./domain/types"
+import type { MergeMethod } from "./domain/types"
 import { prKey } from "./domain/types"
 import { GraphQLClient } from "./github/graphql"
 import { RestClient } from "./github/rest"
@@ -36,9 +36,11 @@ export class GitHubClient {
   readonly graphql: GraphQLClient
   readonly poller: Poller
   readonly collections: Collections
+  readonly platform: Platform
   private syncing = false
 
-  constructor(readonly platform: Platform) {
+  constructor(platform: Platform) {
+    this.platform = platform
     this.auth = new TokenAuthProvider(platform)
     this.rest = new RestClient({ fetch: platform.fetch, getToken: () => this.auth.getToken() })
     this.graphql = new GraphQLClient(this.rest)
@@ -84,30 +86,31 @@ export class GitHubClient {
     for (const group of this.collections.groups.collection.values()) {
       const key = jobKeys.groupPulls(group.id)
       current.add(key)
-      this.poller.register(this.groupPullsJob(group))
+      this.poller.register(this.groupPullsJob(group.id))
+      // A view may already watch a group that just appeared; load it now, not on its next tick.
+      if (!this.groupJobs.has(key)) void this.poller.refresh(key)
     }
     for (const key of this.groupJobs) if (!current.has(key)) this.poller.unregister(key)
     this.groupJobs.clear()
     for (const key of current) this.groupJobs.add(key)
   }
 
-  private groupPullsJob(group: Group) {
+  private groupPullsJob(groupId: string) {
     return {
-      key: jobKeys.groupPulls(group.id),
+      key: jobKeys.groupPulls(groupId),
       activeMs: ACTIVE_MS,
       idleMs: IDLE_MS,
       resource: "graphql" as const,
       run: async () => {
-        // Read the latest group definition; team repos may have changed.
-        const latest = this.collections.groups.collection.get(group.id) ?? group
-        await syncGroupPulls(this.graphql, latest, this.collections.pulls)
+        // Read the group when the job runs: it may not be loaded yet, and team repos change.
+        const group = this.collections.groups.collection.get(groupId)
+        if (group) await syncGroupPulls(this.graphql, group, this.collections.pulls)
       },
     }
   }
 
   watchGroup(groupId: string): () => void {
-    const group = this.collections.groups.collection.get(groupId)
-    return group ? this.poller.watch(this.groupPullsJob(group)) : () => {}
+    return this.poller.watch(this.groupPullsJob(groupId))
   }
 
   /** Keeps a pull request's detail and files fresh while a view shows it. */

@@ -20,7 +20,11 @@ export class TokenAuthProvider implements AuthProvider {
   private token: string | null = null
   source: TokenSource | null = null
 
-  constructor(private readonly platform: Platform) {}
+  private readonly platform: Platform
+
+  constructor(platform: Platform) {
+    this.platform = platform
+  }
 
   getToken(): string | null {
     return this.token

@@ -5,13 +5,14 @@ export const DEFAULT_API_URL = "https://api.github.com"
 export type Fetch = typeof globalThis.fetch
 
 export class GitHubError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-    readonly body?: unknown,
-  ) {
+  readonly status: number
+  readonly body: unknown
+
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.name = "GitHubError"
+    this.status = status
+    this.body = body
   }
 }
 
@@ -38,9 +39,11 @@ type Query = Record<string, string | number | boolean | undefined>
 export class RestClient {
   readonly rateLimits = new RateLimits()
   private readonly etags = new Map<string, string>()
+  private readonly options: RestClientOptions
   private readonly apiUrl: string
 
-  constructor(private readonly options: RestClientOptions) {
+  constructor(options: RestClientOptions) {
+    this.options = options
     this.apiUrl = options.apiUrl ?? DEFAULT_API_URL
   }
 

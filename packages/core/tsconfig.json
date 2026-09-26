@@ -11,7 +11,8 @@
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true
   },
   "include": ["src"]
 }

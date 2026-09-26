@@ -11,13 +11,27 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@github-client/core": "workspace:*",
     "@github-client/ui": "workspace:*",
+    "@journeyapps/wa-sqlite": "^1.4.1",
+    "@tanstack/browser-db-sqlite-persistence": "^0.2.23",
+    "@tanstack/db": "^0.9.2",
+    "@tanstack/react-db": "^0.4.1",
+    "@tanstack/react-router": "^1.170.39",
+    "@tanstack/react-virtual": "^3.14.13",
+    "@tanstack/tauri-db-sqlite-persistence": "^0.2.23",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-http": "^2.6.1",
+    "@tauri-apps/plugin-opener": "^2.5.5",
+    "@tauri-apps/plugin-sql": "^2.4.1",
     "lucide-react": "^1.48.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "sonner": "^2.0.8"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "^2.11.5",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",

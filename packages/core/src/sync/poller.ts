@@ -41,7 +41,11 @@ export class Poller {
   private readonly listeners = new Set<() => void>()
   private stopped = false
 
-  constructor(private readonly rateLimits: RateLimits) {}
+  private readonly rateLimits: RateLimits
+
+  constructor(rateLimits: RateLimits) {
+    this.rateLimits = rateLimits
+  }
 
   /** Keeps a job polling in the background for the lifetime of the poller. */
   register(job: PollJob): void {
