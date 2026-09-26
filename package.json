@@ -1,0 +1,28 @@
+{
+  "name": "github-client",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "desktop:dev": "bun --cwd apps/desktop tauri dev",
+    "desktop:build": "bun --cwd apps/desktop tauri build",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "turbo": "^2.11.4",
+    "typescript": "~6"
+  },
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
