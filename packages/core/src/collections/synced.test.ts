@@ -44,3 +44,55 @@ test("replacing with identical rows writes nothing to SQLite", async () => {
   await synced.replace([{ id: "1", title: "changed" }, rows[1]!], () => true)
   expect(latestRowVersion(db.file, "rows")).toBeGreaterThan(before)
 })
+
+test("writes jobs after an empty persisted collection is cleaned up and restarted", async () => {
+  const options = {
+    id: "jobs",
+    getKey: (row: { id: number; runId: number; name: string }) => row.id,
+    schemaVersion: 1,
+  }
+  const synced = createSyncedCollection({ ...options, persistence: db.open() })
+  await synced.collection.preload()
+  await synced.collection.cleanup()
+
+  const job = { id: 108471660925, runId: 36266350823, name: "web" }
+  await synced.replace([job], (row) => row.runId === job.runId)
+
+  expect(synced.collection.get(job.id)).toMatchObject(job)
+  expect(latestRowVersion(db.file, "jobs")).toBeGreaterThan(0)
+  await synced.collection.cleanup()
+
+  const reopened = createSyncedCollection({ ...options, persistence: db.open() })
+  await reopened.collection.preload()
+  expect(reopened.collection.get(job.id)).toMatchObject(job)
+  await reopened.collection.cleanup()
+})
+
+test.each([true, false])(
+  "updates and deletes rows across repeated cleanup (persisted: %s)",
+  async (persisted) => {
+    const synced = createSyncedCollection<Row, string>({
+      id: "rows",
+      getKey: (row) => row.id,
+      persistence: persisted ? db.open() : undefined,
+      schemaVersion: 1,
+    })
+    await synced.upsert([
+      { id: "one", title: "original" },
+      { id: "two", title: "remove by replacement" },
+    ])
+    await synced.collection.cleanup()
+
+    await synced.replace([{ id: "one", title: "updated" }], () => true)
+    expect([...synced.collection.values()]).toMatchObject([{ id: "one", title: "updated" }])
+    await synced.collection.cleanup()
+
+    await synced.upsert([{ id: "three", title: "added after restart" }])
+    await synced.remove(["three", "one"])
+    expect(synced.collection.size).toBe(0)
+    await synced.collection.cleanup()
+    await synced.collection.preload()
+    expect(synced.collection.size).toBe(0)
+    await synced.collection.cleanup()
+  },
+)
