@@ -230,7 +230,7 @@ function PullRow({
         )}
       </span>
       <UserAvatar src={pull.authorAvatarUrl} login={pull.author} />
-      <span className="w-16 text-right text-xs text-muted-foreground">
+      <span className="min-w-16 shrink-0 text-right text-xs text-muted-foreground">
         <RelativeTime iso={pull.updatedAt} />
       </span>
     </li>
