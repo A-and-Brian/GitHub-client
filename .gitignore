@@ -1,7 +1,5 @@
-# Logs
-logs
-# Source module, not log output.
-!packages/core/src/logs/
+# Logs (root only; packages/core/src/logs is source code)
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*
