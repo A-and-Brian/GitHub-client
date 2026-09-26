@@ -14,6 +14,7 @@ import { CheckIcon, ClockIcon, RefreshCwIcon, Undo2Icon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
+import { showError, useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 import { ReviewBadge, rollupState, StateIcon } from "@/components/status"
 import { RelativeTime } from "@/components/time"
@@ -38,6 +39,12 @@ export function Inbox() {
   const search = useRef<HTMLInputElement>(null)
   useWatch((c) => c.watchGroup("me"), [])
   const status = useJobStatus(jobKeys.groupPulls("me"))
+  useErrorToast(status?.error, { id: "inbox-sync-error", title: "Could not refresh inbox" })
+  const [reconcileError, setReconcileError] = useState<unknown>(null)
+  useErrorToast(reconcileError, {
+    id: "inbox-reconcile-error",
+    title: "Could not update inbox state",
+  })
 
   useEffect(() => {
     const tick = () => {
@@ -57,9 +64,18 @@ export function Inbox() {
   }, [])
   // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile when persisted preferences hydrate or change
   useEffect(() => {
+    let cancelled = false
     void client
       .reconcileInboxState(viewer.login, pulls, now, groups)
-      .catch((error: unknown) => toast.error(String(error)))
+      .then(() => {
+        if (!cancelled) setReconcileError(null)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setReconcileError(error)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [client, viewer.login, pulls, groups, preferences, now])
 
   const entries = useMemo(
@@ -297,21 +313,21 @@ function InboxActions({
                 onClick: () => {
                   void client
                     .restoreInboxPull(viewer.login, pull)
-                    .catch((error: unknown) => toast.error(String(error)))
+                    .catch((error: unknown) => showError("Could not restore pull request", error))
                 },
               },
             }
           : undefined,
       )
     } catch (error) {
-      toast.error(String(error))
+      showError("Could not update pull request", error)
     } finally {
       setBusy(false)
     }
   }
   const snooze = (until: number) => {
     if (!Number.isFinite(until) || until <= Date.now()) {
-      toast.error("Choose a future return time.")
+      showError("Choose a future return time.")
       return
     }
     void run(

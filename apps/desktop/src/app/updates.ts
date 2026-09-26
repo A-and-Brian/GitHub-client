@@ -1,6 +1,7 @@
 import type { Update } from "@tauri-apps/plugin-updater"
 import { useSyncExternalStore } from "react"
 import { toast } from "sonner"
+import { showError } from "@/app/errors"
 import { UPDATE_DISMISSED_KEY } from "@/app/storage-keys"
 import { isDesktop } from "@/platform"
 
@@ -59,7 +60,7 @@ export async function checkForUpdates({ manual = false } = {}): Promise<void> {
     }
   } catch (error) {
     setState({ status: "error", message: String(error) })
-    if (manual) toast.error("Could not check for updates", { description: String(error) })
+    if (manual) showError("Could not check for updates", error)
   }
 }
 
@@ -96,7 +97,7 @@ export async function installUpdate(): Promise<void> {
     await relaunch()
   } catch (error) {
     setState({ status: "available", version: update.version })
-    toast.error("Could not install the update", { description: String(error) })
+    showError("Could not install the update", error)
   }
 }
 

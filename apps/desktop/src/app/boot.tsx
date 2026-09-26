@@ -4,6 +4,7 @@ import { TooltipProvider } from "@github-client/ui/components/tooltip"
 import { RouterProvider } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { SessionContext } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { createAppRouter } from "@/app/router"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { startUpdateChecks } from "@/app/updates"
@@ -29,6 +30,10 @@ type State =
 export function Boot() {
   const [state, setState] = useState<State>({ phase: "loading" })
   const { theme } = useTheme()
+  useErrorToast(state.phase === "failed" ? state.error : null, {
+    id: "startup-error",
+    title: "Could not start GitHub-client",
+  })
 
   useEffect(() => startUpdateChecks(), [])
 

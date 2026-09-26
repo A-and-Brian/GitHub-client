@@ -28,6 +28,7 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { useClient, useJobStatus, useSession } from "@/app/client"
+import { showError, useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
@@ -54,7 +55,9 @@ export function Layout() {
   const [version, setVersion] = useState<string>()
 
   useEffect(() => {
-    void appVersion().then(setVersion)
+    void appVersion()
+      .then(setVersion)
+      .catch((error) => showError("Could not read app version", error))
   }, [])
 
   useEffect(() => {
@@ -139,10 +142,14 @@ export function Layout() {
               )}
               <DropdownMenuItem
                 onClick={async () => {
-                  localStorage.setItem(SIGNED_OUT_KEY, "1")
-                  localStorage.removeItem(VIEWER_KEY)
-                  await client.signOut()
-                  window.location.reload()
+                  try {
+                    localStorage.setItem(SIGNED_OUT_KEY, "1")
+                    localStorage.removeItem(VIEWER_KEY)
+                    await client.signOut()
+                    window.location.reload()
+                  } catch (error) {
+                    showError("Could not sign out", error)
+                  }
                 }}
               >
                 Sign out
@@ -297,6 +304,7 @@ function UpdateButton() {
 function SyncIndicator() {
   const client = useClient()
   const groups = useJobStatus(jobKeys.groups)
+  useErrorToast(groups?.error, { id: "groups-sync-error", title: "Could not refresh groups" })
   const graphql = useSyncExternalStore(
     (listener) => client.rest.rateLimits.subscribe(listener),
     () => client.rest.rateLimits.get("graphql"),

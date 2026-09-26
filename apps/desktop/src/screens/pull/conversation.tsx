@@ -14,6 +14,7 @@ import { GitCommitHorizontalIcon, MessageSquareIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { useClient } from "@/app/client"
+import { showError } from "@/app/errors"
 import { UserAvatar } from "@/components/avatar"
 import { GitHubHtml } from "@/components/github-html"
 import { ReviewBadge } from "@/components/status"
@@ -174,7 +175,7 @@ function MergeBox({ detail }: { detail: PullRequestDetail }) {
       await client.merge(detail.repo, detail.number, method)
       toast.success(`Merged #${detail.number}`)
     } catch (e) {
-      toast.error(`Merge failed: ${e instanceof Error ? e.message : e}`)
+      showError("Merge failed", e)
     } finally {
       setBusy(false)
     }
@@ -224,7 +225,7 @@ function CommentBox({ detail }: { detail: PullRequestDetail }) {
       await client.comment(detail.repo, detail.number, body)
       setBody("")
     } catch (e) {
-      toast.error(`Comment failed: ${e instanceof Error ? e.message : e}`)
+      showError("Comment failed", e)
     } finally {
       setBusy(false)
     }
