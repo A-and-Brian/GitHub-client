@@ -50,6 +50,14 @@ export function CommandPalette({
         <CommandInput placeholder="Pull requests, groups, repositories, commands…" />
         <CommandList className="max-h-[60vh]">
           <CommandEmpty>No results.</CommandEmpty>
+          <CommandGroup heading="Inbox">
+            <CommandItem
+              value="inbox active snoozed settled pull requests"
+              onSelect={() => run(() => navigate({ to: "/inbox" }))}
+            >
+              PR inbox
+            </CommandItem>
+          </CommandGroup>
           <CommandGroup heading="Groups">
             {groups.map((g) => (
               <CommandItem
@@ -101,6 +109,22 @@ export function CommandPalette({
                 >
                   <span className="truncate">{fullName}</span>
                   <span className="ml-auto text-xs text-muted-foreground">Workflow runs</span>
+                </CommandItem>
+              )
+            })}
+          </CommandGroup>
+          <CommandGroup heading="Repository settings">
+            {repoNames.map((fullName) => {
+              const [owner, repo] = fullName.split("/") as [string, string]
+              return (
+                <CommandItem
+                  key={fullName}
+                  value={`settings ${fullName}`}
+                  onSelect={() =>
+                    run(() => navigate({ to: "/settings/$owner/$repo", params: { owner, repo } }))
+                  }
+                >
+                  {fullName} · Settings
                 </CommandItem>
               )
             })}

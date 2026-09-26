@@ -16,6 +16,7 @@ interface RestTeam {
   name: string
   slug: string
   organization: { login: string }
+  parent?: { name: string; slug: string } | null
 }
 
 export const toRepo = (r: RestRepo): Repo => ({
@@ -37,11 +38,31 @@ export async function syncGroups(
   groups: SyncedCollection<Group, string>,
   repos: SyncedCollection<Repo, string>,
 ): Promise<void> {
-  const [orgs, teams, starred] = await Promise.all([
-    rest.get<Array<{ login: string }>>("/user/orgs", { per_page: 100 }),
-    rest.get<RestTeam[]>("/user/teams", { per_page: 100 }),
+  const [orgResult, teamResult, starred] = await Promise.all([
+    rest.pollAll<{ login: string }>("/user/orgs", {}, { maxPages: 100 }),
+    rest.pollAll<RestTeam>("/user/teams", {}, { maxPages: 100 }),
     rest.pollAll<RestRepo>("/user/starred", {}, { maxPages: 10, recencySorted: true }),
   ])
+  const orgs =
+    orgResult.status === "ok"
+      ? orgResult.data
+      : [...groups.collection.values()]
+          .filter((group) => group.kind === "org")
+          .map((group) => ({ login: group.org ?? group.name }))
+  const teams =
+    teamResult.status === "ok"
+      ? teamResult.data
+      : [...groups.collection.values()]
+          .filter((group) => group.kind === "team")
+          .map((group) => ({
+            name: group.name.slice((group.org?.length ?? 0) + 1),
+            slug: group.id.slice(group.id.lastIndexOf("/") + 1),
+            organization: { login: group.org ?? "" },
+            parent:
+              group.parentSlug && group.parentName
+                ? { slug: group.parentSlug, name: group.parentName }
+                : null,
+          }))
 
   // One inaccessible team (for example behind SAML SSO) must not stop the other groups.
   const teamRepos = await Promise.allSettled(
@@ -70,6 +91,8 @@ export async function syncGroups(
       kind: "team",
       name: `${team.organization.login}/${team.name}`,
       org: team.organization.login,
+      parentSlug: team.parent?.slug ?? null,
+      parentName: team.parent?.name ?? null,
       order: 1000 + i,
       // An unchanged or unreadable list keeps the repos already stored for the group.
       repos: list?.map((r) => r.fullName) ?? groups.collection.get(id)?.repos ?? [],

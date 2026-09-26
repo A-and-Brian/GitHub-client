@@ -25,6 +25,9 @@ export interface Group {
   /** Sort position in the sidebar. */
   order: number
   org?: string
+  /** GitHub team parent identity within `org`; never inferred from names. */
+  parentSlug?: string | null
+  parentName?: string | null
   /** Repos of team and starred groups (`owner/name`). Org and `me` groups use a search qualifier instead. */
   repos?: string[]
 }
@@ -55,6 +58,10 @@ export interface PullRequest {
   isDraft: boolean
   createdAt: string
   updatedAt: string
+  /** Local time when this group copy was fetched. */
+  syncedAt?: string
+  /** Latest known commit OID; older cached rows may not have this field. */
+  headOid?: string
   headRef: string
   baseRef: string
   reviewDecision: ReviewDecision

@@ -9,6 +9,7 @@ test("sign in, see groups and pull requests, open a pull request", async ({ page
   await page.getByRole("button", { name: "Sign in" }).click()
 
   await expect(page.getByRole("link", { name: /acme/ })).toBeVisible()
+  await page.getByRole("link", { name: "Involving me", exact: true }).click()
   await expect(page.getByText("Speed up the diff view")).toBeVisible()
 
   await page.getByRole("tab", { name: "Review requested" }).click()

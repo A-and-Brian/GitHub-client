@@ -5,9 +5,9 @@ import { Tabs, TabsList, TabsTrigger } from "@github-client/ui/components/tabs"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { MessageSquareIcon, RefreshCwIcon } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useClient, useJobStatus, useSession, useWatch } from "@/app/client"
 import { groupRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
@@ -45,15 +45,20 @@ export function GroupPulls() {
   const teams = useTeamSlugs()
   const visible = useMemo(() => {
     const needle = text.trim().toLowerCase()
-    return pulls.filter((p) => {
-      if (filter === "mine" && p.author !== viewer.login) return false
-      if (filter === "review" && !p.reviewRequests.some((r) => r === viewer.login || teams.has(r)))
-        return false
-      if (!needle) return true
-      return `${p.title} ${p.repo}#${p.number} ${p.author ?? ""} ${p.headRef}`
-        .toLowerCase()
-        .includes(needle)
-    })
+    return pulls
+      .filter((p) => {
+        if (filter === "mine" && p.author !== viewer.login) return false
+        if (
+          filter === "review" &&
+          !p.reviewRequests.some((r) => r === viewer.login || teams.has(r))
+        )
+          return false
+        if (!needle) return true
+        return `${p.title} ${p.repo}#${p.number} ${p.author ?? ""} ${p.headRef}`
+          .toLowerCase()
+          .includes(needle)
+      })
+      .sort((a, b) => a.repo.localeCompare(b.repo) || b.updatedAt.localeCompare(a.updatedAt))
   }, [pulls, filter, text, viewer.login, teams])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the selection when the list changes
@@ -88,8 +93,10 @@ export function GroupPulls() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2">
-        <h1 className="truncate font-semibold">{group?.name ?? groupId}</h1>
+      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
+        <h1 className="truncate font-semibold">
+          {group?.kind === "team" ? `${group.org} / ${group.name}` : (group?.name ?? groupId)}
+        </h1>
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <TabsList>
             <TabsTrigger value="all">All open</TabsTrigger>
@@ -123,14 +130,27 @@ export function GroupPulls() {
       ) : null}
       <ul className="flex-1 overflow-y-auto">
         {visible.map((pull, index) => (
-          <PullRow
-            key={pull.key}
-            pull={pull}
-            index={index}
-            selected={index === selected}
-            onSelect={() => setSelected(index)}
-            onOpen={() => open(pull)}
-          />
+          <Fragment key={pull.key}>
+            {(index === 0 || visible[index - 1]?.repo !== pull.repo) && (
+              <li className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-muted px-4 py-2 text-sm">
+                <h2 className="font-semibold break-all">{pull.repo}</h2>
+                <Link
+                  to="/settings/$owner/$repo"
+                  params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
+                  className="shrink-0 text-xs underline"
+                >
+                  Settings
+                </Link>
+              </li>
+            )}
+            <PullRow
+              pull={pull}
+              index={index}
+              selected={index === selected}
+              onSelect={() => setSelected(index)}
+              onOpen={() => open(pull)}
+            />
+          </Fragment>
         ))}
         {visible.length === 0 && (
           <li className="p-8 text-center text-sm text-muted-foreground">

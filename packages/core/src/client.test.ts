@@ -44,6 +44,17 @@ test("sign-out forgets the token and deletes cached data and drafts", async () =
     },
   ])
   await client.collections.pullFiles.upsert([{ key: "a/b#1", headOid: "abc", files: [] }])
+  await client.collections.inboxPreferences.upsert([
+    {
+      key: "yi:PR_1",
+      accountLogin: "yi",
+      pullId: "PR_1",
+      state: "settled",
+      snoozedUntil: null,
+      snapshot: { headOid: null, reviewRequests: [], failed: false },
+      changedAt: "2026-09-26T00:00:00Z",
+    },
+  ])
   client.addDraft({ prKey: "a/b#1", path: "x", line: 1, startLine: null, side: "RIGHT", body: "?" })
 
   await client.signOut()
@@ -51,5 +62,6 @@ test("sign-out forgets the token and deletes cached data and drafts", async () =
   expect(client.auth.getToken()).toBeNull()
   expect(await client.platform.secrets.get()).toBeNull()
   expect(client.collections.repos.collection.size).toBe(0)
+  expect(client.collections.inboxPreferences.collection.size).toBe(0)
   expect(client.collections.drafts.size).toBe(0)
 })
