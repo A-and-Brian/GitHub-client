@@ -29,10 +29,19 @@ test("settle is local, persists across reload, and failures remain discoverable"
   const list = page.getByRole("complementary", { name: "Pull request inbox", exact: true })
   await expect(list.getByText("Speed up the diff view", { exact: true })).toHaveCount(1)
   await list.getByText("Speed up the diff view", { exact: true }).click()
-  await page.getByRole("button", { name: "Settle", exact: true }).click()
-  await expect(list.getByText("Speed up the diff view", { exact: true })).toHaveCount(0)
+  await page.getByRole("button", { name: "Settle locally", exact: true }).click()
+  // The open PR remains discoverable in its collapsed parked shelf.
+  await expect(list.getByText("Speed up the diff view", { exact: true })).toHaveCount(1)
   await expect(
-    page.getByText("Settled locally. GitHub PR unchanged.", { exact: true }),
+    page
+      .getByRole("region", { name: "Selected pull request" })
+      .getByText("Settled locally · GitHub PR unchanged", { exact: true }),
+  ).toBeVisible()
+  // The success notice is emitted only after the local write is durable.
+  await expect(
+    page
+      .locator("[data-sonner-toast]")
+      .filter({ hasText: "Settled locally · GitHub PR unchanged" }),
   ).toBeVisible()
   await page.reload()
   await expect(page.getByText("No active pull requests.")).toBeVisible()

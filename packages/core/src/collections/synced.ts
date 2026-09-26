@@ -43,27 +43,94 @@ export function createSyncedCollection<T extends object, K extends Key>(
     },
   }
   const config = { id: options.id, getKey: options.getKey, sync, startSync: true }
+  let rollbackWriter: Writer<T, K> | undefined
   const collection = (
     options.persistence
-      ? createCollection(
-          persistedCollectionOptions<T, K>({
+      ? (() => {
+          const persisted = persistedCollectionOptions<T, K>({
             ...config,
             persistence: options.persistence,
             schemaVersion: options.schemaVersion,
-          }),
-        )
+          })
+          const persistedSync = persisted.sync
+          return createCollection({
+            ...persisted,
+            sync: {
+              ...persistedSync,
+              sync: (params) => {
+                // The persistence wrapper publishes sync changes before SQLite
+                // commits. Keep the underlying sync callbacks so a failed write
+                // can publish an inverse change without writing to SQLite again.
+                rollbackWriter = params
+                return persistedSync.sync(params)
+              },
+            },
+          })
+        })()
       : createCollection<T, K>(config)
   ) as Collection<T, K>
 
   // Writes are serialized so that concurrent sync jobs never interleave transactions.
   let queue: Promise<unknown> = Promise.resolve()
-  const transact = (apply: (writer: Writer<T, K>) => void): Promise<void> => {
+  const transact = (
+    keys: readonly K[] | (() => readonly K[]),
+    apply: (writer: Writer<T, K>) => void,
+  ): Promise<void> => {
     const next = queue.then(async () => {
       const writer = await writerReady
       await collection.preload()
+      const affectedKeys = typeof keys === "function" ? keys() : keys
+      const before = new Map(
+        affectedKeys.map((key) => {
+          const row = collection.get(key)
+          return [
+            key,
+            {
+              row: row === undefined ? undefined : (withoutVirtualProps(row) as T),
+              metadata: rollbackWriter?.metadata?.row.get(key),
+            },
+          ] as const
+        }),
+      )
       writer.begin()
-      apply(writer)
-      await writer.commit()
+      try {
+        apply(writer)
+      } catch (error) {
+        // A failed write must not leave an open transaction on the sync stack.
+        const abort = new AbortController()
+        abort.abort()
+        try {
+          await writer.commit(abort.signal)
+        } catch {
+          // Preserve the original write error.
+        }
+        throw error
+      }
+      try {
+        await writer.commit()
+      } catch (error) {
+        if (rollbackWriter) {
+          rollbackWriter.begin({ immediate: true })
+          for (const [key, { row, metadata }] of before) {
+            const exists = collection.has(key)
+            if (row === undefined) {
+              if (exists) rollbackWriter.write({ type: "delete", key })
+            } else if (exists) {
+              // Updates merge fields by default. Delete then insert in one sync
+              // transaction to remove fields introduced by the failed write.
+              rollbackWriter.write({ type: "delete", key })
+              rollbackWriter.write({ type: "insert", value: row })
+            } else {
+              rollbackWriter.write({ type: "insert", value: row })
+            }
+            if (metadata === undefined) rollbackWriter.metadata?.row.delete(key)
+            else rollbackWriter.metadata?.row.set(key, metadata)
+          }
+          const restored = rollbackWriter.commit()
+          if (restored !== true) await restored
+        }
+        throw error
+      }
     })
     queue = next.catch(() => undefined)
     return next
@@ -83,17 +150,25 @@ export function createSyncedCollection<T extends object, K extends Key>(
   return {
     collection,
     replace: (rows, scope) =>
-      transact((writer) => {
-        const keep = new Set(rows.map(options.getKey))
-        for (const row of collection.values()) {
-          const key = options.getKey(row)
-          if (scope(row) && !keep.has(key)) writer.write({ type: "delete", key })
-        }
-        upsertAll(writer, rows)
-      }),
-    upsert: (rows) => transact((writer) => upsertAll(writer, rows)),
+      transact(
+        () => [
+          ...new Set([
+            ...rows.map(options.getKey),
+            ...[...collection.values()].filter(scope).map(options.getKey),
+          ]),
+        ],
+        (writer) => {
+          const keep = new Set(rows.map(options.getKey))
+          for (const row of collection.values()) {
+            const key = options.getKey(row)
+            if (scope(row) && !keep.has(key)) writer.write({ type: "delete", key })
+          }
+          upsertAll(writer, rows)
+        },
+      ),
+    upsert: (rows) => transact(rows.map(options.getKey), (writer) => upsertAll(writer, rows)),
     remove: (keys) =>
-      transact((writer) => {
+      transact(keys, (writer) => {
         for (const key of keys) {
           if (collection.has(key)) writer.write({ type: "delete", key })
         }

@@ -17,14 +17,18 @@ test("one sidebar preserves archived selection, filter and failure state", async
   await expect(page.getByRole("complementary")).toHaveCount(1)
   await page.getByLabel("Filter inbox").fill("diff")
   await openPull(page)
-  await page.getByRole("button", { name: "Settle", exact: true }).click()
+  await page.getByRole("button", { name: "Settle locally", exact: true }).click()
   await page.getByRole("button", { name: /^Settled/ }).click()
   await openPull(page)
   await page.getByRole("button", { name: /^Settled/ }).click()
   await expect(page.getByRole("heading", { name: "Speed up the diff view" })).toBeVisible()
   await page.getByRole("button", { name: "Failures", exact: true }).click()
   await expect(inbox(page).getByText("Speed up the diff view", { exact: true })).toHaveCount(1)
-  await expect(page.getByText("Settled locally · GitHub PR unchanged")).toBeVisible()
+  await expect(
+    page
+      .getByRole("region", { name: "Selected pull request" })
+      .getByText("Settled locally · GitHub PR unchanged"),
+  ).toBeVisible()
   await page.getByRole("button", { name: "Failures", exact: true }).click()
   await expect(page.getByRole("button", { name: /^Settled/ })).toHaveAttribute(
     "aria-expanded",
@@ -152,6 +156,38 @@ test("repository destinations remain consistent", async ({ page }, info) => {
   await expect(inbox(page)).toBeVisible()
 })
 
+test("larger text keeps long PR rows and sidebar controls usable", async ({ page }, info) => {
+  await page.setViewportSize({ width: 1024, height: 900 })
+  const title =
+    "Preserve repository context while making the pull request navigation easier to scan"
+  await fakeGitHub(page, { pullTitle: title })
+  await signIn(page)
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "20px"
+  })
+  await expect(inbox(page).getByText(title, { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "View year", exact: true })).toBeVisible()
+  // The resize rail intentionally extends across the sidebar boundary.
+  const overflow = await inbox(page).evaluate((element) =>
+    [...element.children]
+      .filter((child) => child.getAttribute("role") !== "separator")
+      .filter((child) => child.scrollWidth > child.clientWidth + 1)
+      .map((child) => ({
+        tag: child.tagName,
+        label: child.getAttribute("aria-label"),
+        width: child.clientWidth,
+        content: child.scrollWidth,
+      })),
+  )
+  expect(overflow).toEqual([])
+  await inbox(page)
+    .getByRole("button", { name: `Actions for ${title}` })
+    .focus()
+  await page.keyboard.press("Enter")
+  await expect(page.getByRole("menuitem", { name: "Pin", exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath("large-text.png") })
+})
+
 test("short window keeps Active and footer usable with both archives expanded", async ({
   page,
 }, info) => {
@@ -159,7 +195,7 @@ test("short window keeps Active and footer usable with both archives expanded", 
   await fakeGitHub(page, { pullCount: 24 })
   await signIn(page)
   await openPull(page)
-  await page.getByRole("button", { name: "Settle", exact: true }).click()
+  await page.getByRole("button", { name: "Settle locally", exact: true }).click()
   await inbox(page).getByText("Follow-up pull request 1", { exact: true }).click()
   await page.getByRole("button", { name: "Snooze", exact: true }).click()
   await page.getByRole("button", { name: "In one hour", exact: true }).click()

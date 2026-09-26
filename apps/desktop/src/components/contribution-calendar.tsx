@@ -243,7 +243,7 @@ export function ContributionCalendar() {
   const calendar = state.calendar
   return (
     <section className="min-w-0 border-t border-border px-3 py-2" aria-label="Contributions">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Button
           variant="ghost"
           size="sm"

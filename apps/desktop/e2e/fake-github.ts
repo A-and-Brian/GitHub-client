@@ -114,6 +114,7 @@ export async function fakeGitHub(
     lastContributionDays?: number
     pullCount?: number
     pullTitle?: string
+    pullUpdatedAt?: Record<string, string>
     workflowRun?: boolean
   } = {},
 ) {
@@ -192,6 +193,7 @@ export async function fakeGitHub(
               nodes: Array.from({ length: options.pullCount ?? 1 }, (_, index) => ({
                 ...pullNode,
                 id: index === 0 ? "PR_1" : `PR_${index + 1}`,
+                updatedAt: options.pullUpdatedAt?.[`PR_${index + 1}`] ?? pullNode.updatedAt,
                 number: 7 + index,
                 title:
                   index === 0

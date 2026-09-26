@@ -8,12 +8,23 @@ import { prKey } from "./domain/types"
 import { GraphQLClient } from "./github/graphql"
 import { RestClient } from "./github/rest"
 import {
+  deriveInboxPulls,
+  ensureInboxOrder as ensureInboxOrderState,
+  type InboxMoveTarget,
+  type InboxMutationResult,
   type InboxPreference,
+  type InboxPull,
+  type InboxUndoToken,
+  inboxPreferenceKey,
+  moveInboxPull as moveInboxPullState,
+  pinInboxPull as pinInboxPullState,
   reconcileInboxState as reconcileInboxPreferences,
   restoreInboxPreference as restoreInboxPreferenceRow,
   restoreInboxPull as restoreInboxPullState,
   setInboxSnoozed as setInboxSnoozedState,
   settleInboxPull as settleInboxPullState,
+  unpinInboxPull as unpinInboxPullState,
+  wakeInboxPull as wakeInboxPullState,
 } from "./inbox"
 import type { Platform } from "./platform"
 import { syncRunJobs, syncWorkflowRuns, syncWorkflows, toWorkflowRun } from "./sync/actions"
@@ -35,6 +46,15 @@ export const jobKeys = {
   workflows: (repo: string) => `workflows:${repo}`,
 }
 
+interface InboxUndoSnapshot {
+  token: InboxUndoToken
+  before: Array<{ pullId: string; preference?: InboxPreference }>
+  after: Array<{ pullId: string; preference?: InboxPreference }>
+}
+
+const INBOX_UNDO_TTL_MS = 5_000
+const MAX_INBOX_UNDO_TOKENS = 100
+
 /**
  * The GitHub client: auth, API clients, collections, sync scheduling, and
  * write actions. One instance per app.
@@ -48,6 +68,9 @@ export class GitHubClient {
   readonly collections: Collections
   readonly platform: Platform
   private syncing = false
+  private inboxQueue: Promise<unknown> = Promise.resolve()
+  private nextInboxUndoId = 0
+  private inboxUndoTokens = new Map<number, InboxUndoSnapshot>()
 
   constructor(platform: Platform) {
     this.platform = platform
@@ -63,56 +86,286 @@ export class GitHubClient {
   async signIn(token: string): Promise<TokenCheck> {
     const probe = new RestClient({ fetch: this.platform.fetch, getToken: () => token })
     const check = await checkToken(probe)
-    await this.auth.signIn(token)
-    this.contributions.reset()
+    await this.enqueueInbox(async () => {
+      await this.auth.signIn(token)
+      this.inboxUndoTokens.clear()
+      this.contributions.reset()
+    })
     return check
   }
 
   /** Forgets the token and deletes cached data, which belongs to the signed-out account. */
   async signOut(): Promise<void> {
-    this.poller.stop()
-    await this.auth.signOut()
-    this.contributions.reset()
-    const { drafts, ...synced } = this.collections
-    await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
-    const draftIds = [...drafts.keys()]
-    if (draftIds.length > 0) await drafts.delete(draftIds).isPersisted.promise
+    await this.enqueueInbox(async () => {
+      this.poller.stop()
+      await this.auth.signOut()
+      this.contributions.reset()
+      this.inboxUndoTokens.clear()
+      const { drafts, ...synced } = this.collections
+      await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
+      const draftIds = [...drafts.keys()]
+      if (draftIds.length > 0) await drafts.delete(draftIds).isPersisted.promise
+    })
   }
 
-  setInboxSnoozed(accountLogin: string, pull: PullRequest, until: string) {
-    return setInboxSnoozedState(this.collections.inboxPreferences, accountLogin, pull, until)
+  setInboxSnoozed(
+    accountLogin: string,
+    pull: PullRequest,
+    until: string,
+  ): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      setInboxSnoozedState(this.collections.inboxPreferences, accountLogin, pull, until),
+    )
   }
 
-  settleInboxPull(accountLogin: string, pull: PullRequest) {
-    return settleInboxPullState(this.collections.inboxPreferences, accountLogin, pull)
+  settleInboxPull(accountLogin: string, pull: PullRequest): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      settleInboxPullState(this.collections.inboxPreferences, accountLogin, pull),
+    )
   }
 
-  restoreInboxPull(accountLogin: string, pull: PullRequest) {
-    return restoreInboxPullState(this.collections.inboxPreferences, accountLogin, pull)
+  restoreInboxPull(accountLogin: string, pull: PullRequest): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      restoreInboxPullState(this.collections.inboxPreferences, accountLogin, pull),
+    )
+  }
+
+  pinInboxPull(accountLogin: string, pull: PullRequest): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      pinInboxPullState(this.collections.inboxPreferences, accountLogin, pull),
+    )
+  }
+
+  unpinInboxPull(accountLogin: string, pull: PullRequest): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      unpinInboxPullState(this.collections.inboxPreferences, accountLogin, pull),
+    )
+  }
+
+  wakeInboxPull(accountLogin: string, pull: PullRequest): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      wakeInboxPullState(this.collections.inboxPreferences, accountLogin, pull),
+    )
+  }
+
+  moveInboxPull(
+    accountLogin: string,
+    pull: PullRequest,
+    target: InboxMoveTarget,
+  ): Promise<InboxMutationResult> {
+    return this.mutateInbox(accountLogin, pull, () =>
+      moveInboxPullState(this.collections.inboxPreferences, accountLogin, pull, target.section, {
+        beforePullId: target.beforePullId,
+        afterPullId: target.afterPullId,
+      }),
+    )
+  }
+
+  ensureInboxOrder(accountLogin: string, orderedEntries: readonly InboxPull[]): Promise<void> {
+    return this.enqueueInbox(async () => {
+      await this.preloadInboxCollections()
+      const before = this.accountPreferenceMap(accountLogin)
+      await ensureInboxOrderState(this.collections.inboxPreferences, accountLogin, orderedEntries)
+      this.invalidateUndoForChangedRows(accountLogin, before)
+    })
+  }
+
+  /** Restores one recent inbox action only if its captured rows have not changed. */
+  undoInboxMutation(token: InboxUndoToken, now?: number): Promise<boolean> {
+    return this.enqueueInbox(async () => {
+      await this.preloadInboxCollections()
+      const currentTime = now ?? Date.now()
+      this.pruneInboxUndoTokens(currentTime)
+      const current = this.inboxUndoTokens.get(token.id)
+      const account = token.accountLogin.trim().toLowerCase()
+      if (
+        !current ||
+        current.token.expiresAt !== token.expiresAt ||
+        current.token.accountLogin !== account ||
+        currentTime > current.token.expiresAt
+      ) {
+        return false
+      }
+      for (const snapshot of current.after) {
+        if (
+          !samePreference(
+            this.collections.inboxPreferences.collection.get(
+              inboxPreferenceKey(account, snapshot.pullId),
+            ),
+            snapshot.preference,
+          )
+        ) {
+          this.inboxUndoTokens.delete(token.id)
+          return false
+        }
+      }
+      const restores = current.before.flatMap((snapshot) =>
+        snapshot.preference ? [snapshot.preference] : [],
+      )
+      const affectedKeys = new Set(
+        current.before.map((snapshot) => inboxPreferenceKey(account, snapshot.pullId)),
+      )
+      await this.collections.inboxPreferences.replace(restores, (row) => affectedKeys.has(row.key))
+      this.inboxUndoTokens.delete(token.id)
+      this.invalidateUndoTokens(account, new Set(current.after.map(({ pullId }) => pullId)))
+      return true
+    })
   }
 
   restoreInboxPreference(accountLogin: string, pullId: string, previous?: InboxPreference) {
-    return restoreInboxPreferenceRow(
-      this.collections.inboxPreferences,
-      accountLogin,
-      pullId,
-      previous,
-    )
+    return this.enqueueInbox(async () => {
+      await this.preloadInboxCollections()
+      await restoreInboxPreferenceRow(
+        this.collections.inboxPreferences,
+        accountLogin,
+        pullId,
+        previous,
+      )
+      this.invalidateUndoTokens(accountLogin, new Set([pullId]))
+    })
   }
 
   reconcileInboxState(
     accountLogin: string,
     pulls: readonly PullRequest[],
     now = Date.now(),
-    groups: readonly Group[] = [...this.collections.groups.collection.values()],
+    groups?: readonly Group[],
   ) {
-    return reconcileInboxPreferences(
-      this.collections.inboxPreferences,
-      accountLogin,
-      pulls,
-      now,
-      groups,
+    return this.enqueueInbox(async () => {
+      await this.preloadInboxCollections()
+      const before = this.accountPreferenceMap(accountLogin)
+      const currentGroups = groups ?? [...this.collections.groups.collection.values()]
+      const currentPulls = [...pulls]
+      await reconcileInboxPreferences(
+        this.collections.inboxPreferences,
+        accountLogin,
+        currentPulls,
+        now,
+        currentGroups,
+      )
+      this.invalidateUndoForChangedRows(accountLogin, before)
+    })
+  }
+
+  private enqueueInbox<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.inboxQueue.then(operation)
+    this.inboxQueue = next.then(
+      () => undefined,
+      () => undefined,
     )
+    return next
+  }
+
+  private async preloadInboxCollections(): Promise<void> {
+    await Promise.all([
+      this.collections.inboxPreferences.collection.preload(),
+      this.collections.pulls.collection.preload(),
+      this.collections.groups.collection.preload(),
+    ])
+  }
+
+  private accountPreferenceMap(accountLogin: string): Map<string, InboxPreference> {
+    const account = accountLogin.trim().toLowerCase()
+    return new Map(
+      [...this.collections.inboxPreferences.collection.values()]
+        .filter((row) => row.accountLogin.trim().toLowerCase() === account)
+        .map((row) => [row.pullId, plainPreference(row)]),
+    )
+  }
+
+  private async prepareInbox(accountLogin: string, extraPull?: PullRequest): Promise<void> {
+    await this.preloadInboxCollections()
+    const pulls: PullRequest[] = [...this.collections.pulls.collection.values()].map((pull) => ({
+      ...pull,
+    }))
+    if (extraPull && !pulls.some((pull) => pull.id === extraPull.id)) pulls.push(extraPull)
+    const groups = [...this.collections.groups.collection.values()]
+    const preferences = [...this.collections.inboxPreferences.collection.values()]
+    const entries = deriveInboxPulls(
+      pulls,
+      groups,
+      accountLogin,
+      preferences,
+      Date.now(),
+      "all",
+    ).sort(compareInboxRecency)
+    const before = this.accountPreferenceMap(accountLogin)
+    await ensureInboxOrderState(this.collections.inboxPreferences, accountLogin, entries)
+    this.invalidateUndoForChangedRows(accountLogin, before)
+  }
+
+  private mutateInbox(
+    accountLogin: string,
+    pull: PullRequest,
+    operation: () => Promise<InboxPreference>,
+  ): Promise<InboxMutationResult> {
+    return this.enqueueInbox(async () => {
+      await this.prepareInbox(accountLogin, pull)
+      const before = this.accountPreferenceMap(accountLogin)
+      const preference = await operation()
+      const after = this.accountPreferenceMap(accountLogin)
+      const changedIds = new Set<string>()
+      for (const id of new Set([...before.keys(), ...after.keys()])) {
+        if (!samePreference(before.get(id), after.get(id))) changedIds.add(id)
+      }
+      if (changedIds.size === 0) return { preference, undo: null }
+
+      const account = accountLogin.trim().toLowerCase()
+      const snapshots = (source: Map<string, InboxPreference>) =>
+        [...changedIds].map((pullId) => {
+          const row = source.get(pullId)
+          return { pullId, ...(row ? { preference: plainPreference(row) } : {}) }
+        })
+      const token: InboxUndoToken = {
+        id: ++this.nextInboxUndoId,
+        accountLogin: account,
+        expiresAt: Date.now() + INBOX_UNDO_TTL_MS,
+      }
+      this.pruneInboxUndoTokens(Date.now())
+      this.invalidateUndoTokens(account, changedIds)
+      this.inboxUndoTokens.set(token.id, {
+        token,
+        before: snapshots(before),
+        after: snapshots(after),
+      })
+      while (this.inboxUndoTokens.size > MAX_INBOX_UNDO_TOKENS) {
+        const oldest = this.inboxUndoTokens.keys().next().value
+        if (oldest === undefined) break
+        this.inboxUndoTokens.delete(oldest)
+      }
+      return { preference, undo: token }
+    })
+  }
+
+  private invalidateUndoForChangedRows(
+    accountLogin: string,
+    before: Map<string, InboxPreference>,
+  ): void {
+    const after = this.accountPreferenceMap(accountLogin)
+    const changedIds = new Set(
+      [...new Set([...before.keys(), ...after.keys()])].filter(
+        (id) => !samePreference(before.get(id), after.get(id)),
+      ),
+    )
+    if (changedIds.size > 0) this.invalidateUndoTokens(accountLogin, changedIds)
+  }
+
+  private pruneInboxUndoTokens(now: number): void {
+    for (const [id, snapshot] of this.inboxUndoTokens) {
+      if (now > snapshot.token.expiresAt) this.inboxUndoTokens.delete(id)
+    }
+  }
+
+  private invalidateUndoTokens(accountLogin: string, changedIds: ReadonlySet<string>): void {
+    const account = accountLogin.trim().toLowerCase()
+    for (const [id, snapshot] of this.inboxUndoTokens) {
+      if (
+        snapshot.token.accountLogin === account &&
+        snapshot.after.some(({ pullId }) => changedIds.has(pullId))
+      ) {
+        this.inboxUndoTokens.delete(id)
+      }
+    }
   }
 
   /** Starts background sync of groups and of every group's pull requests. */
@@ -333,4 +586,40 @@ export class GitHubClient {
     await workflows.dispatchWorkflow(this.rest, repo, workflowId, ref, inputs)
     await this.refresh(jobKeys.runs(repo))
   }
+}
+
+function compareInboxRecency(a: InboxPull, b: InboxPull): number {
+  return (
+    b.pull.updatedAt.localeCompare(a.pull.updatedAt) ||
+    a.pull.repo.localeCompare(b.pull.repo) ||
+    a.pull.number - b.pull.number
+  )
+}
+
+function plainPreference(row: InboxPreference): InboxPreference
+function plainPreference(row: InboxPreference | undefined): InboxPreference | undefined
+function plainPreference(row: InboxPreference | undefined): InboxPreference | undefined {
+  if (!row) return undefined
+  return {
+    key: row.key,
+    accountLogin: row.accountLogin,
+    pullId: row.pullId,
+    state: row.state,
+    snoozedUntil: row.snoozedUntil,
+    snapshot: {
+      headOid: row.snapshot.headOid,
+      reviewRequests: [...row.snapshot.reviewRequests],
+      failed: row.snapshot.failed,
+    },
+    changedAt: row.changedAt,
+    activeOrder: row.activeOrder,
+    pinOrder: row.pinOrder,
+  }
+}
+
+function samePreference(
+  left: InboxPreference | undefined,
+  right: InboxPreference | undefined,
+): boolean {
+  return JSON.stringify(plainPreference(left)) === JSON.stringify(plainPreference(right))
 }

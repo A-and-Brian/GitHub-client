@@ -81,7 +81,7 @@ export function Boot() {
         />
       )}
       {state.phase === "ready" && <App client={state.client} viewer={state.viewer} />}
-      <Toaster theme={theme} position="bottom-right" />
+      <Toaster theme={theme} position="bottom-right" expand />
     </TooltipProvider>
   )
 }

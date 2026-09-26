@@ -13,6 +13,16 @@ export * from "./diff/parse"
 export * from "./diff/rows"
 export * from "./domain/types"
 export { GitHubError } from "./github/rest"
+export type {
+  InboxDropPosition,
+  InboxMoveTarget,
+  InboxMutationResult,
+  InboxOrderSection,
+  InboxPreference,
+  InboxPull,
+  InboxState,
+  InboxUndoToken,
+} from "./inbox"
 export * from "./logs/parse"
 export * from "./logs/view"
 export type { Platform, SecretStore } from "./platform"

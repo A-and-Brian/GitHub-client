@@ -1,33 +1,31 @@
-import { jobKeys, type PullRequest } from "@github-client/core"
-import { deriveInboxPulls } from "@github-client/core/inbox"
-import { Button } from "@github-client/ui/components/button"
-import { Input } from "@github-client/ui/components/input"
+import { DndContext, DragOverlay, pointerWithin } from "@dnd-kit/core"
 import {
-  Popover,
-  PopoverContent,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@github-client/ui/components/popover"
+  type InboxMutationResult,
+  type InboxPull,
+  jobKeys,
+  type PullRequest,
+} from "@github-client/core"
 import { cn } from "@github-client/ui/lib/utils"
 import { useLiveQuery } from "@tanstack/react-db"
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ClockIcon,
-  InboxIcon,
-  InfoIcon,
-  RefreshCwIcon,
-  Undo2Icon,
-} from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { useShortcuts } from "@/app/shortcuts"
 import { ContributionCalendar } from "@/components/contribution-calendar"
-import { ReviewBadge, rollupState, StateIcon } from "@/components/status"
-import { RelativeTime } from "@/components/time"
-import { AccountSyncFooter, InboxScopeChooser } from "./layout"
+import { useInboxDrag } from "./inbox-drag"
+import { useInboxGeometry } from "./inbox-geometry"
+import { InboxHeader } from "./inbox-header"
+import { useInboxModel } from "./inbox-model"
+import { useInboxMutations } from "./inbox-mutations"
+import {
+  cancelInboxDragOnUnmount,
+  InboxActions,
+  readShelfState,
+  shelfStorageKey,
+} from "./inbox-parts"
+import { InboxRow } from "./inbox-row"
+import { type DropPosition, InboxSections } from "./inbox-sidebar"
+import { AccountSyncFooter } from "./layout"
 import { PullContent, type PullTab } from "./pull/pull-page"
 
 export function Inbox() {
@@ -38,17 +36,82 @@ export function Inbox() {
     q.from({ p: client.collections.inboxPreferences.collection }),
   ).data
   const [failures, setFailures] = useState(false)
-  const [expanded, setExpanded] = useState({ snoozed: false, settled: false })
+  const [expanded, setExpanded] = useState(() => readShelfState(viewer.login))
+  const [settledLimit, setSettledLimit] = useState(10)
   const [scope, setScope] = useState<"involving" | "all">("involving")
   const [text, setText] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState<PullTab>("conversation")
   const [now, setNow] = useState(Date.now)
   const [online, setOnline] = useState(() => navigator.onLine)
+  const [orderReady, setOrderReady] = useState(false)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dropPosition, setDropPosition] = useState<DropPosition | null>(null)
   const search = useRef<HTMLInputElement>(null)
+  const orderAccount = useRef(viewer.login)
+  const geometry = useInboxGeometry()
+  const { busyIds, latestUndo, runMutation, runRowMutation } = useInboxMutations()
   useWatch((c) => c.watchGroup("me"), [])
   const status = useJobStatus(jobKeys.groupPulls("me"))
+  useEffect(() => () => cancelInboxDragOnUnmount(), [])
 
+  const {
+    fullEntries,
+    entries,
+    failuresList,
+    pinnedEntries,
+    activeEntries,
+    snoozedEntries,
+    settledEntries,
+    selected,
+    selectedEntry,
+    visibleSettled,
+    visibleSnoozed,
+    visibleSettledRows,
+  } = useInboxModel({
+    pulls,
+    groups,
+    accountLogin: viewer.login,
+    preferences,
+    now,
+    scope,
+    text,
+    selectedId,
+    expanded,
+    settledLimit,
+  })
+  useEffect(() => {
+    let current = true
+    setOrderReady(false)
+    void client
+      .ensureInboxOrder(viewer.login, fullEntries)
+      .then(() => {
+        if (current) setOrderReady(true)
+      })
+      .catch((error: unknown) => {
+        if (current) toast.error(`Couldn't prepare inbox order: ${String(error)}`)
+      })
+    return () => {
+      current = false
+    }
+  }, [client, viewer.login, fullEntries])
+  useEffect(() => {
+    if (orderAccount.current !== viewer.login) {
+      orderAccount.current = viewer.login
+      setExpanded(readShelfState(viewer.login))
+      setSettledLimit(10)
+      setSelectedId(null)
+      latestUndo.current = null
+    }
+  }, [latestUndo, viewer.login])
+  useEffect(() => {
+    try {
+      localStorage.setItem(shelfStorageKey(viewer.login), JSON.stringify(expanded))
+    } catch {
+      // Shelf state remains usable when storage is disabled.
+    }
+  }, [expanded, viewer.login])
   useEffect(() => {
     const tick = () => {
       setNow(Date.now())
@@ -65,526 +128,269 @@ export function Inbox() {
       window.removeEventListener("offline", tick)
     }
   }, [])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile when persisted preferences hydrate or change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile when preferences hydrate or change
   useEffect(() => {
     void client
       .reconcileInboxState(viewer.login, pulls, now, groups)
       .catch((error: unknown) => toast.error(String(error)))
   }, [client, viewer.login, pulls, groups, preferences, now])
+  const dragDisabled = failures || !orderReady
 
-  const entries = useMemo(
-    () =>
-      deriveInboxPulls(pulls, groups, viewer.login, preferences, now, scope).sort(
-        (a, b) =>
-          b.pull.updatedAt.localeCompare(a.pull.updatedAt) ||
-          a.pull.repo.localeCompare(b.pull.repo) ||
-          a.pull.number - b.pull.number,
-      ),
-    [pulls, groups, viewer.login, preferences, now, scope],
-  )
-  const matching = entries.filter(({ pull }) => {
-    return `${pull.repo} #${pull.number} ${pull.title} ${pull.author ?? ""}`
-      .toLowerCase()
-      .includes(text.trim().toLowerCase())
-  })
-  const failuresList = matching.filter(({ pull }) =>
-    ["FAILURE", "ERROR"].includes(pull.checkState ?? ""),
-  )
-  const activeEntries = matching.filter(({ state }) => state === "active")
-  const snoozedEntries = matching.filter(({ state }) => state === "snoozed")
-  const settledEntries = matching.filter(({ state }) => state === "settled")
-  const visible = failures ? failuresList : activeEntries
-  const selected = entries.find((entry) => entry.pull.id === selectedId)
   const select = (pull: PullRequest) => {
+    const entry = fullEntries.find((item) => item.pull.id === pull.id)
+    if (entry?.state === "snoozed") setExpanded((value) => ({ ...value, snoozed: true }))
+    if (entry?.state === "settled") {
+      setExpanded((value) => ({ ...value, settled: true }))
+      const index = settledEntries.findIndex((item) => item.pull.id === pull.id)
+      if (index >= settledLimit) setSettledLimit(index + 1)
+    }
     setSelectedId(pull.id)
     setTab("conversation")
   }
   const navigable = failures
     ? failuresList
-    : [
-        ...activeEntries,
-        ...(expanded.snoozed ? snoozedEntries : []),
-        ...(expanded.settled ? settledEntries : []),
-      ]
-  const step = (direction: number) => {
-    const index = navigable.findIndex((entry) => entry.pull.id === selectedId)
-    const next = navigable[Math.max(0, Math.min(navigable.length - 1, index + direction))]
-    if (next) select(next.pull)
+    : [...pinnedEntries, ...activeEntries, ...snoozedEntries, ...settledEntries]
+  const step = (direction: -1 | 1) => {
+    if (navigable.length === 0) return
+    const currentIndex = navigable.findIndex((entry) => entry.pull.id === selectedId)
+    const nextIndex =
+      currentIndex < 0 ? 0 : Math.max(0, Math.min(navigable.length - 1, currentIndex + direction))
+    const next = navigable[nextIndex]
+    if (!next) return
+    select(next.pull)
+    if (next.state === "snoozed") setExpanded((value) => ({ ...value, snoozed: true }))
+    if (next.state === "settled") {
+      setExpanded((value) => ({ ...value, settled: true }))
+      const settledIndex = settledEntries.findIndex((entry) => entry.pull.id === next.pull.id)
+      if (settledIndex >= settledLimit) setSettledLimit(settledIndex + 1)
+    }
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>(`[data-pull-id="${CSS.escape(next.pull.id)}"]`)
+        ?.scrollIntoView({ block: "nearest" }),
+    )
   }
   useShortcuts({ j: () => step(1), k: () => step(-1), "/": () => search.current?.focus() })
 
+  const applyDetailMutation = (
+    label: string,
+    mutation: () => Promise<InboxMutationResult>,
+    closePopover?: () => void,
+  ) => {
+    if (selected) void runMutation(selected.pull, label, mutation).then(closePopover)
+  }
+  const drag = useInboxDrag({
+    entries,
+    pinnedEntries,
+    activeEntries,
+    settledEntries,
+    failures,
+    orderReady,
+    draggingId,
+    dragOverId,
+    setDraggingId,
+    setDragOverId,
+    setDropPosition,
+    runMutation,
+  })
+  const toggleExpanded = (section: "snoozed" | "settled") =>
+    setExpanded((current) => ({ ...current, [section]: !current[section] }))
+  const renderRow = (entry: InboxPull) => (
+    <InboxRow
+      key={entry.pull.id}
+      entry={entry}
+      selected={selectedId === entry.pull.id}
+      now={now}
+      online={online}
+      dragDisabled={dragDisabled}
+      busy={busyIds.has(entry.pull.id)}
+      onSelect={select}
+      onPin={(pull) =>
+        runRowMutation(pull, "Pinned", () => client.pinInboxPull(viewer.login, pull))
+      }
+      onUnpin={(pull) =>
+        runRowMutation(pull, "Unpinned", () => client.unpinInboxPull(viewer.login, pull))
+      }
+      onSnooze={(pull, until) =>
+        runRowMutation(
+          pull,
+          "Snoozed",
+          () => client.setInboxSnoozed(viewer.login, pull, until),
+          "snoozed",
+        )
+      }
+      onSettle={(pull) =>
+        runRowMutation(
+          pull,
+          "Settled locally · GitHub PR unchanged",
+          () => client.settleInboxPull(viewer.login, pull),
+          "settled",
+        )
+      }
+      onRestore={(pull) => {
+        const current = fullEntries.find((item) => item.pull.id === pull.id)
+        if (current?.state === "snoozed")
+          runRowMutation(
+            pull,
+            "Woke to previous position",
+            () => client.wakeInboxPull(viewer.login, pull),
+            "row",
+          )
+        else
+          runRowMutation(
+            pull,
+            "Returned to Active",
+            () => client.restoreInboxPull(viewer.login, pull),
+            "row",
+          )
+      }}
+      onMove={drag.moveBy}
+    />
+  )
+
   return (
-    <div className="flex h-full min-w-0">
-      <aside
-        aria-label="Pull request inbox"
-        className={cn(
-          "flex min-h-0 w-full shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:w-[320px] lg:w-[340px]",
-          selected && "hidden md:flex",
-        )}
+    <div className="relative flex h-full min-w-0">
+      <DndContext
+        sensors={drag.sensors}
+        collisionDetection={(args) => {
+          const collisions = pointerWithin(args)
+          const row = collisions.find(
+            (collision) => !String(collision.id).startsWith("inbox-drop:"),
+          )
+          return row ? [row] : collisions.slice(0, 1)
+        }}
+        onDragStart={drag.onDragStart}
+        onDragOver={drag.onDragOver}
+        onDragMove={drag.onDragOver}
+        onDragCancel={drag.onDragCancel}
+        onDragEnd={drag.onDragEnd}
       >
-        <header className="space-y-3 border-b p-3">
-          <h1 className="flex items-center gap-2 px-1 text-sm font-semibold">
-            <InboxIcon className="size-4" />
-            PR inbox
-          </h1>
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  variant="outline"
-                  className="h-8 w-full justify-start text-sm font-medium"
-                  aria-label="Browse inbox and groups"
-                />
-              }
-            >
-              Inbox <ChevronDownIcon className="ml-auto size-4 text-muted-foreground" />
-            </PopoverTrigger>
-            <PopoverContent
-              align="start"
-              className="max-h-[70vh] w-[min(300px,85vw)] overflow-y-auto p-2"
-            >
-              <PopoverTitle className="sr-only">Inbox and groups</PopoverTitle>
-              <InboxScopeChooser />
-            </PopoverContent>
-          </Popover>
-        </header>
-        <div className="flex items-center gap-2 border-b px-3 py-2">
-          <select
-            aria-label="Inbox scope"
-            className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm"
-            value={scope}
-            onChange={(e) => {
-              setScope(e.target.value as typeof scope)
-              setSelectedId(null)
-            }}
-          >
-            <option value="involving">Involving me</option>
-            <option value="all">All synced PRs</option>
-          </select>
-          <Button
-            variant={failures ? "secondary" : "ghost"}
-            size="sm"
-            aria-pressed={failures}
-            onClick={() => setFailures((value) => !value)}
-          >
-            Failures
-          </Button>
-        </div>
-        {!online && (
-          <p role="status" className="border-b px-3 py-1.5 text-xs text-muted-foreground">
-            Offline · showing cached PRs.
-          </p>
-        )}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b p-3">
-            <Input
-              ref={search}
-              aria-label="Filter inbox"
-              placeholder="Filter PRs"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Refresh inbox"
-              onClick={() =>
-                void Promise.all(groups.map((g) => client.refresh(jobKeys.groupPulls(g.id))))
-              }
-            >
-              <RefreshCwIcon className={cn(status?.running && "animate-spin")} />
-            </Button>
-            <Popover>
-              <PopoverTrigger
-                render={<Button variant="ghost" size="icon-sm" aria-label="About this inbox" />}
-              >
-                <InfoIcon />
-              </PopoverTrigger>
-              <PopoverContent align="end" className="max-w-64 text-sm text-muted-foreground">
-                {!online && <p>Offline · showing cached PRs.</p>}
-                <p>
-                  Local inbox for PRs from synced groups. GitHub access and result limits apply.
-                  Snooze and settle are private to this app.
-                </p>
-              </PopoverContent>
-            </Popover>
-          </div>
-          {!failures && (
-            <h2 className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
-              Active <span className="ml-1 font-normal tabular-nums">{activeEntries.length}</span>
-            </h2>
+        <aside
+          aria-label="Pull request inbox"
+          style={{ width: geometry.mobile ? "100%" : geometry.width }}
+          className={cn(
+            "relative flex min-h-0 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground",
+            geometry.mobile && selected ? "hidden" : "flex",
           )}
-          {failures && (
-            <p className="border-b px-3 py-2 text-xs text-muted-foreground">
-              Failures across all states, including snoozed and settled.
+        >
+          <InboxHeader
+            search={search}
+            text={text}
+            onTextChange={setText}
+            scope={scope}
+            onScopeChange={setScope}
+            failures={failures}
+            onToggleFailures={() => setFailures((value) => !value)}
+            onRefresh={() => {
+              void Promise.all(groups.map((group) => client.refresh(jobKeys.groupPulls(group.id))))
+            }}
+            refreshing={Boolean(status?.running)}
+            online={online}
+          />
+          <InboxSections
+            failures={failures}
+            failuresList={failuresList}
+            loading={Boolean(status?.running && !status.lastSuccess)}
+            pinnedEntries={pinnedEntries}
+            activeEntries={activeEntries}
+            snoozedEntries={snoozedEntries}
+            settledEntries={settledEntries}
+            visibleSnoozed={visibleSnoozed}
+            visibleSettledRows={visibleSettledRows}
+            visibleSettledCount={visibleSettled.length}
+            selectedSnoozed={selectedEntry?.state === "snoozed"}
+            selectedSettled={selectedEntry?.state === "settled"}
+            expanded={expanded}
+            dragDisabled={dragDisabled}
+            dropPosition={dropPosition}
+            renderRow={renderRow}
+            onToggleShelf={toggleExpanded}
+            onShowMoreSettled={() => setSettledLimit((limit) => limit + 25)}
+          />
+          <ContributionCalendar />
+          <AccountSyncFooter />
+          {!geometry.mobile && (
+            <div
+              {...geometry.separatorProps}
+              className="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none bg-transparent hover:bg-ring/40 focus-visible:bg-ring/40"
+            />
+          )}
+        </aside>
+        <section
+          aria-label="Selected pull request"
+          className={cn(
+            "flex min-w-0 flex-1 flex-col overflow-hidden",
+            geometry.mobile && !selected && "hidden",
+          )}
+        >
+          {selected ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <PullContent
+                key={selected.pull.id}
+                owner={selected.pull.repo.split("/")[0]!}
+                name={selected.pull.repo.split("/")[1]!}
+                number={selected.pull.number}
+                tab={tab}
+                onTabChange={setTab}
+                onBack={() => {
+                  setSelectedId(null)
+                  requestAnimationFrame(() => search.current?.focus())
+                }}
+                backLabel="Back to inbox"
+                actions={
+                  <InboxActions
+                    key={selected.pull.id}
+                    state={selected.state}
+                    snoozedUntil={selected.preference?.snoozedUntil}
+                    busy={busyIds.has(selected.pull.id)}
+                    onSnooze={(until, close) =>
+                      applyDetailMutation(
+                        `Snoozed until ${new Date(until).toLocaleString()}`,
+                        () =>
+                          client.setInboxSnoozed(
+                            viewer.login,
+                            selected.pull,
+                            new Date(until).toISOString(),
+                          ),
+                        close,
+                      )
+                    }
+                    onSettle={(close) =>
+                      applyDetailMutation(
+                        "Settled locally · GitHub PR unchanged",
+                        () => client.settleInboxPull(viewer.login, selected.pull),
+                        close,
+                      )
+                    }
+                    onRestore={() =>
+                      applyDetailMutation("Returned to Active", () =>
+                        selected.state === "snoozed"
+                          ? client.wakeInboxPull(viewer.login, selected.pull)
+                          : client.restoreInboxPull(viewer.login, selected.pull),
+                      )
+                    }
+                  />
+                }
+              />
+            </div>
+          ) : (
+            <p className="m-auto max-w-sm p-6 text-center text-sm text-muted-foreground">
+              Select a PR to review its conversation, files and checks.
             </p>
           )}
-          <ul
-            aria-label={failures ? "Pull request failures" : "Active pull requests"}
-            className="min-h-[80px] min-w-0 flex-1 overflow-y-auto"
-          >
-            {visible.map((entry) => (
-              <InboxRow
-                key={entry.pull.id}
-                entry={entry}
-                selectedId={selectedId}
-                now={now}
-                online={online}
-                select={select}
-              />
-            ))}
-            {visible.length === 0 && (
-              <li className="p-6 text-center text-sm text-muted-foreground">
-                {status?.running && !status.lastSuccess
-                  ? "Loading pull requests…"
-                  : failures
-                    ? "No failed checks in this view."
-                    : "No active pull requests."}
-              </li>
-            )}
-          </ul>
-          {!failures && (
-            <div className="min-h-0 max-h-[40%] shrink-0 overflow-y-auto border-t">
-              <InboxSection
-                title="Snoozed"
-                count={snoozedEntries.length}
-                hasItems={snoozedEntries.length > 0}
-                expanded={expanded.snoozed}
-                onToggle={() => setExpanded((value) => ({ ...value, snoozed: !value.snoozed }))}
-              >
-                {snoozedEntries.map((entry) => (
-                  <InboxRow
-                    key={entry.pull.id}
-                    entry={entry}
-                    selectedId={selectedId}
-                    now={now}
-                    online={online}
-                    select={select}
-                  />
-                ))}
-              </InboxSection>
-              <InboxSection
-                title="Settled"
-                count={settledEntries.length}
-                hasItems={settledEntries.length > 0}
-                expanded={expanded.settled}
-                onToggle={() => setExpanded((value) => ({ ...value, settled: !value.settled }))}
-              >
-                {settledEntries.map((entry) => (
-                  <InboxRow
-                    key={entry.pull.id}
-                    entry={entry}
-                    selectedId={selectedId}
-                    now={now}
-                    online={online}
-                    select={select}
-                  />
-                ))}
-              </InboxSection>
+        </section>
+        <DragOverlay dropAnimation={null}>
+          {drag.dragLabel && (
+            <div
+              role="status"
+              aria-label="Dragging pull request"
+              className="rounded-md border bg-popover px-3 py-2 text-sm shadow-lg"
+            >
+              {drag.dragLabel}
             </div>
           )}
-        </div>
-        <ContributionCalendar />
-        <AccountSyncFooter />
-      </aside>
-      <section
-        aria-label="Selected pull request"
-        className={cn(
-          "flex min-w-0 flex-1 flex-col overflow-hidden",
-          !selected && "hidden md:flex",
-        )}
-      >
-        {selected && (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <PullContent
-              key={selected.pull.id}
-              owner={selected.pull.repo.split("/")[0]!}
-              name={selected.pull.repo.split("/")[1]!}
-              number={selected.pull.number}
-              tab={tab}
-              onTabChange={setTab}
-              onBack={() => {
-                setSelectedId(null)
-                window.requestAnimationFrame(() => search.current?.focus())
-              }}
-              backLabel="Back to inbox"
-              actions={
-                <InboxActions
-                  pull={selected.pull}
-                  state={selected.state}
-                  snoozedUntil={selected.preference?.snoozedUntil}
-                />
-              }
-            />
-          </div>
-        )}
-        {!selected && (
-          <p className="m-auto max-w-sm p-6 text-center text-sm text-muted-foreground">
-            Select a PR to review its conversation, files and checks.
-          </p>
-        )}
-      </section>
-    </div>
-  )
-}
-
-function InboxSection({
-  title,
-  count,
-  hasItems,
-  expanded,
-  onToggle,
-  children,
-}: {
-  title: string
-  count: number
-  hasItems: boolean
-  expanded: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <section className="border-b last:border-b-0">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-sidebar-accent"
-      >
-        {expanded ? (
-          <ChevronDownIcon className="size-4" />
-        ) : (
-          <ChevronRightIcon className="size-4" />
-        )}
-        {title}
-        <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
-      </button>
-      {expanded && (
-        <ul>
-          {hasItems ? (
-            children
-          ) : (
-            <li className="px-9 py-2 text-xs text-muted-foreground">
-              No {title.toLowerCase()} PRs
-            </li>
-          )}
-        </ul>
-      )}
-    </section>
-  )
-}
-
-function InboxRow({
-  entry,
-  selectedId,
-  now,
-  online,
-  select,
-}: {
-  entry: ReturnType<typeof deriveInboxPulls>[number]
-  selectedId: string | null
-  now: number
-  online: boolean
-  select: (pull: PullRequest) => void
-}) {
-  return (
-    <li className="border-b last:border-b-0">
-      <button
-        type="button"
-        className={cn(
-          "flex w-full flex-col gap-1.5 px-3 py-3 text-left text-sm hover:bg-sidebar-accent focus-visible:outline focus-visible:outline-ring",
-          selectedId === entry.pull.id && "bg-sidebar-accent",
-        )}
-        aria-current={selectedId === entry.pull.id ? "true" : undefined}
-        onClick={() => select(entry.pull)}
-      >
-        <span className="flex items-center justify-between gap-2 text-xs font-semibold">
-          <span className="truncate">{entry.pull.repo}</span>
-          <span className="shrink-0 text-muted-foreground">#{entry.pull.number}</span>
-        </span>
-        <span className="line-clamp-2 font-medium">
-          {entry.pull.isDraft && "Draft: "}
-          {entry.pull.title}
-        </span>
-        <span className="flex flex-wrap items-center gap-2 text-xs">
-          <InboxCheck pull={entry.pull} now={now} online={online} />
-          <ReviewBadge decision={entry.pull.reviewDecision} />
-        </span>
-        <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="capitalize">{entry.state}</span>
-          {entry.state === "snoozed" && entry.preference?.snoozedUntil && (
-            <span>Until {new Date(entry.preference.snoozedUntil).toLocaleString()}</span>
-          )}
-          <RelativeTime iso={entry.pull.updatedAt} />
-        </span>
-      </button>
-    </li>
-  )
-}
-
-function InboxCheck({ pull, now, online }: { pull: PullRequest; now: number; online: boolean }) {
-  const status = useJobStatus(jobKeys.groupPulls(pull.groupId))
-  const stale = !status?.lastSuccess || now - status.lastSuccess > 3 * 60_000
-  const state = rollupState(pull.checkState)
-  if (!online || status?.error || stale)
-    return (
-      <span className="text-muted-foreground">
-        {!online ? "Offline · " : status?.error ? "Sync failed · " : "Awaiting refresh · "}last
-        check: {state ?? "unknown"}
-      </span>
-    )
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1",
-        state === "failure" && "font-semibold text-destructive",
-      )}
-    >
-      {state && <StateIcon state={state} />}
-      {state === "failure"
-        ? "Checks failed"
-        : state === "success"
-          ? "Checks passed"
-          : state === "pending"
-            ? "Checks pending"
-            : "Checks unknown"}
-    </span>
-  )
-}
-
-function InboxActions({
-  pull,
-  state,
-  snoozedUntil,
-}: {
-  pull: PullRequest
-  state: "active" | "snoozed" | "settled"
-  snoozedUntil?: string | null
-}) {
-  const { client, viewer } = useSession()
-  const [busy, setBusy] = useState(false)
-  const [open, setOpen] = useState(false)
-  const [custom, setCustom] = useState("")
-  const run = async (action: () => Promise<unknown>, label: string, undo = false) => {
-    setBusy(true)
-    try {
-      await action()
-      setOpen(false)
-      toast.success(
-        label,
-        undo
-          ? {
-              action: {
-                label: "Undo",
-                onClick: () => {
-                  void client
-                    .restoreInboxPull(viewer.login, pull)
-                    .catch((error: unknown) => toast.error(String(error)))
-                },
-              },
-            }
-          : undefined,
-      )
-    } catch (error) {
-      toast.error(String(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const snooze = (until: number) => {
-    if (!Number.isFinite(until) || until <= Date.now()) {
-      toast.error("Choose a future return time.")
-      return
-    }
-    void run(
-      () => client.setInboxSnoozed(viewer.login, pull, new Date(until).toISOString()),
-      `Snoozed until ${new Date(until).toLocaleString()}`,
-      true,
-    )
-  }
-  const tomorrow = () => {
-    const date = new Date()
-    date.setDate(date.getDate() + 1)
-    date.setHours(9, 0, 0, 0)
-    return date.getTime()
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-      <span className="mr-auto text-xs text-muted-foreground">
-        {state === "settled"
-          ? "Settled locally · GitHub PR unchanged"
-          : state === "snoozed"
-            ? `Snoozed until ${snoozedUntil ? new Date(snoozedUntil).toLocaleString() : "return time"}`
-            : "Active"}
-      </span>
-      {state === "active" ? (
-        <>
-          <Popover open={open} onOpenChange={setOpen}>
-            <PopoverTrigger render={<Button variant="outline" size="sm" disabled={busy} />}>
-              <ClockIcon />
-              Snooze
-            </PopoverTrigger>
-            <PopoverContent align="end">
-              <PopoverTitle>Return to Active</PopoverTitle>
-              <Button
-                variant="ghost"
-                className="justify-start"
-                disabled={busy}
-                onClick={() => snooze(Date.now() + 60 * 60_000)}
-              >
-                In one hour
-              </Button>
-              <Button
-                variant="ghost"
-                className="justify-start"
-                disabled={busy}
-                onClick={() => snooze(tomorrow())}
-              >
-                Tomorrow at 9:00 AM
-              </Button>
-              <label className="text-xs" htmlFor="snooze-time">
-                Custom time ({Intl.DateTimeFormat().resolvedOptions().timeZone})
-              </label>
-              <Input
-                id="snooze-time"
-                type="datetime-local"
-                value={custom}
-                onChange={(e) => setCustom(e.target.value)}
-              />
-              <Button disabled={busy || !custom} onClick={() => snooze(new Date(custom).getTime())}>
-                Snooze until selected time
-              </Button>
-            </PopoverContent>
-          </Popover>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() =>
-              void run(
-                () => client.settleInboxPull(viewer.login, pull),
-                "Settled locally. GitHub PR unchanged.",
-                true,
-              )
-            }
-          >
-            <CheckIcon />
-            Settle
-          </Button>
-        </>
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={() =>
-            void run(() => client.restoreInboxPull(viewer.login, pull), "Returned to Active")
-          }
-        >
-          <Undo2Icon />
-          Restore to Active
-        </Button>
-      )}
+        </DragOverlay>
+      </DndContext>
     </div>
   )
 }
