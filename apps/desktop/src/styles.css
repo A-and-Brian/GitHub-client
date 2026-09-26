@@ -145,3 +145,30 @@
 .dark .diff-token {
   color: var(--dark);
 }
+
+/* Keep the PR layout responsive to its detail pane, including the inbox. */
+.pull-content-body {
+  container: pull-pane / size;
+}
+.pull-conversation-checks {
+  display: none;
+}
+@container pull-pane (min-width: 1152px) {
+  .pull-conversation-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 768px) 320px;
+    gap: 24px;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 16px;
+  }
+  .pull-conversation-checks {
+    position: sticky;
+    align-self: start;
+    top: 16px;
+    display: block;
+    max-height: calc(100cqh - 32px);
+    overflow-y: auto;
+  }
+}

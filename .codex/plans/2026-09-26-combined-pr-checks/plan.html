@@ -1,0 +1,74 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conversation with checks alongside — plan</title><script>try{const t=localStorage.getItem('pr-plan-theme');document.documentElement.classList.toggle('dark',t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches)}catch{}</script><style>:root{--bg:#f7f7f5;--panel:#fff;--fg:#202522;--muted:#53615a;--border:#d9dfda;--accent:#236748;color-scheme:light}html.dark{--bg:#151a17;--panel:#1f2722;--fg:#e5ece7;--muted:#afc0b4;--border:#3d4b42;--accent:#93dab2;color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:40px 24px 90px}h1{font-size:clamp(28px,4vw,44px);line-height:1.15;max-width:800px;margin:18px 0 24px}h2{font-size:23px;border-top:1px solid var(--border);padding-top:24px;margin-top:36px}p,li{max-width:920px}li{margin:12px 0}code{font-size:.87em;overflow-wrap:anywhere;background:var(--panel);padding:2px 4px}.mock{font:clamp(10px,1.4vw,15px)/1.8 ui-monospace,monospace;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px;overflow:auto;color:var(--fg)}button{border:1px solid var(--border);border-radius:6px;padding:9px 13px;background:var(--panel);color:var(--fg);cursor:pointer}button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.top{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;gap:16px}.label{color:var(--accent);font-weight:650}footer{font-size:13px;color:var(--muted);margin-top:40px}@media(max-width:560px){main{padding:24px 16px 60px}.mock{padding:12px}}</style></head><body><main><div class="top"><span class="label">GitHub Client · Layout proposal · 26 Sep 2026</span><button id="theme" type="button" aria-label="Toggle dark mode">Toggle theme</button></div><h1>Conversation with checks alongside</h1>
+<p>Status: Awaiting visual approval. Applies to full PR pages and inbox detail panes.</p>
+<h2>Proposed experience</h2>
+<p>Shift the conversation left and show workflow checks in a sticky right column when the PR content pane is at least 1152px wide. “Actions” means the existing GitHub Actions/checks in the screenshot. Review, refresh, merge and comment controls keep their current behavior and locations.</p>
+<p>Use 16px outer padding, a conversation column up to 768px, a 24px gap and a 320px checks column. Left-align the grid; extra space stays to the right. Below 1152px, retain the centered conversation. Measure the PR pane, not the window: the inbox list consumes another 320/384px.</p>
+<p>Keep Conversation, Files and Checks tabs at every width, with existing links and shortcuts 1, 2 and 3. The combined layout appears only on Conversation.</p>
+<h2>Layout mockups</h2>
+<p>Wide PR pane, schematic:</p>
+<pre class="mock">
+PR heading                                        Review
+
+Conversation    Files (43)    Checks (6)
+
+--------------------------------------------------------
+
+[ Conversation / description ]   [ Checks (6)           ]
+
+[ Timeline                   ]   [ Changeset · skipped  ]
+
+[                            ]   [ Frontend · success   ]
+
+[ Merge and comment controls ]   [ Test · running       ]
+
+  up to 768px                      320px, sticky
+
+</pre>
+<p>Narrow PR pane, including a narrow inbox detail pane in a wide window:</p>
+<pre class="mock">
+PR heading                         Review
+
+Conversation    Files    Checks
+
+-----------------------------------------
+
+    [ Centered conversation ]
+
+    [ Timeline              ]
+
+    [ Merge / comment       ]
+
+Checks remain available in their tab.
+
+</pre>
+<h2>Alternatives</h2>
+<ul>
+<li>Recommended: sticky checks alongside Conversation, retaining Checks navigation. Uses available space and preserves navigation.</li>
+<li>Remove Checks tab at wide sizes: fewer tabs, but introduces responsive routing and shortcut behavior.</li>
+<li>Checks below conversation: simpler scrolling, but long descriptions still separate checks from discussion.</li>
+</ul>
+<h2>Implementation</h2>
+<ul>
+<li><code>apps/desktop/src/screens/pull/checks.tsx</code>: extract the existing grouped check list from its scrolling tab wrapper. Reuse it in the sidebar. Preserve workflow/status grouping, status text/icons, internal run/job links, external links and the empty message. Wrap long workflow headings and keep statuses and links visible; retain accessible full check names.</li>
+<li><code>apps/desktop/src/screens/pull/conversation.tsx</code>: make the existing conversation shell support the two columns. Keep one stable conversation instance and one conversation scroll parent. CSS hides the sidebar below the breakpoint; resizing must not remount merge/comment forms. Sticky sidebar starts 16px from the scroll area&#x27;s top, with its own overflow only when checks exceed available height.</li>
+<li><code>apps/desktop/src/screens/pull/pull-page.tsx</code>: establish the named query container on the bounded, min-height-zero flex body below the header. Use pane width for layout and content-area height for the sidebar height cap, accounting for inbox actions and wrapped headers. If using container height units, put size containment on this already flex-sized body. Prefer Tailwind utilities; touch <code>apps/desktop/src/styles.css</code> only for necessary scoped rules.</li>
+<li><code>apps/desktop/e2e/pull-layout.spec.ts</code>: add layout behavior coverage with the existing fake GitHub harness. Extend <code>apps/desktop/e2e/fake-github.ts</code> only for necessary fixtures. No backend, schema, dependency, preference or new fetch changes.</li>
+</ul>
+<h2>Evidence and risks</h2>
+<ul>
+<li>PullContent is shared by standalone PR and inbox; the inbox has its own list and actions row. A viewport breakpoint or viewport-based height cap would be incorrect there.</li>
+<li>Both current tabs own h-full overflow-y-auto wrappers and centered max-w-3xl content. Nesting those wrappers directly would create competing scroll areas. Reuse the list rather than embed the whole ChecksTab.</li>
+<li>Checks already come from the same PullRequestDetail. Keep one source of data and one grouped list implementation.</li>
+<li>Preserve form state when resizing through CSS layout changes. Tab changes retain current behavior; this does not add cross-tab draft persistence.</li>
+</ul>
+<h2>Acceptance and verification</h2>
+<ul>
+<li>Test standalone PR and inbox at actual pane widths just below and at 1152px. Check simultaneous conversation/checks only at the threshold, narrow centering, and no horizontal overflow.</li>
+<li>Enter a comment draft, resize through the breakpoint both ways, and confirm one composer and unchanged draft. Merge controls remain accessible.</li>
+<li>Scroll a long conversation and verify the checks stay near the content top. With many checks and a short window, reach the final entry without trapping conversation scrolling.</li>
+<li>Cover empty checks, long names, success, skipped, running and failing statuses. Check keyboard access and ensure the hidden narrow sidebar adds no focusable links.</li>
+<li>Exercise Checks tab, 1/2/3 shortcuts, direct Checks links, internal run/job links and external check links. Files has no sidebar. Use fake data; do not submit real comments, reviews or merges.</li>
+<li>Run <code>bun run lint</code>, <code>bun run typecheck</code>, <code>bun run test</code>, and <code>bun --cwd apps/desktop run test:e2e e2e/pull-layout.spec.ts e2e/review.spec.ts e2e/merge.spec.ts</code>. Inspect wide/narrow views in light and dark mode. Report baseline failures or unavailable browser verification separately.</li>
+</ul>
+<h2>Approval and stop condition</h2>
+<p>Approve the combined layout, 1152px pane breakpoint and retained Checks tab through Plannotator before implementation. Completion is this scoped layout plus the behavior checks above. No commit, publishing or unrelated UI work is included.</p><footer>Generated from canonical plan.md. Approval is recorded separately in review.json.</footer></main><script>const b=document.getElementById('theme');function update(){b.setAttribute('aria-pressed',document.documentElement.classList.contains('dark'))}update();b.addEventListener('click',()=>{const d=document.documentElement.classList.toggle('dark');try{localStorage.setItem('pr-plan-theme',d?'dark':'light')}catch{}update()})</script></body></html>

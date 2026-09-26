@@ -154,7 +154,7 @@ export function PullContent({
           {error != null ? "Pull request unavailable. Use Refresh to try again." : "Loading…"}
         </p>
       ) : (
-        <div className="min-h-0 flex-1">
+        <div className="pull-content-body min-h-0 flex-1">
           {tab === "conversation" && <ConversationTab detail={detail} />}
           {tab === "files" && <FilesTab detail={detail} />}
           {tab === "checks" && <ChecksTab detail={detail} />}
