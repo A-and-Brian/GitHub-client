@@ -1,5 +1,11 @@
 # @github-client/desktop
 
+## 0.2.0
+
+### Minor Changes
+
+- [#6](https://github.com/Yis-company/GitHub-client/pull/6) [`00a57ce`](https://github.com/Yis-company/GitHub-client/commit/00a57cee6b3f040f08ff91d4a9fc3d1d24798aaa) Thanks [@ybtam](https://github.com/ybtam)! - Group teams by organization and parent team, make repository context clearer, add a persistent PR inbox with snooze and settle controls, and edit supported GitHub repository settings in the app.
+
 ## 0.1.1
 
 ### Patch Changes
