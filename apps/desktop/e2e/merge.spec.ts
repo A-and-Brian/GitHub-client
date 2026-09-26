@@ -88,7 +88,10 @@ test("failed merge remains retryable", async ({ page }) => {
   await merge.click()
   await page.getByRole("button", { name: "Confirm merge" }).click()
 
-  await expect(page.getByText(/Merge failed: Merge is blocked by repository policy/)).toBeVisible()
+  const errorToast = page.locator('[data-sonner-toast][data-type="error"]')
+  await expect(errorToast).toBeVisible()
+  await expect(errorToast).toContainText("Merge failed")
+  await expect(errorToast).toContainText("Merge is blocked by repository policy")
   await expect(page.getByRole("button", { name: "Confirm merge" })).toBeEnabled()
   await page.getByRole("button", { name: "Confirm merge" }).click()
   await expect
