@@ -8,6 +8,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
 import { type ReactNode, useEffect, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { pullRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
 import { CheckSummary, CheckSummaryHelp } from "@/components/check-summary"
@@ -69,6 +70,8 @@ export function PullContent({
   const key = prKey(repo, number)
   useWatch((c) => c.watchPull(repo, number), [repo, number])
   const status = useJobStatus(jobKeys.pull(repo, number))
+  const error = status?.error
+  useErrorToast(error, { id: `pull-error:${key}`, title: `Could not load ${repo} #${number}` })
   const detail = useLiveQuery(
     (q) =>
       q.from({ d: client.collections.pullDetails.collection }).where(({ d }) => eq(d.key, key)),
@@ -175,13 +178,10 @@ export function PullContent({
           <CheckSummaryHelp checks={detail?.checks} />
         </div>
       </header>
-      {status?.error ? (
-        <p className="p-6 text-sm text-destructive">
-          Could not load: {String((status.error as Error).message ?? status.error)}
-        </p>
-      ) : null}
       {!detail ? (
-        <p className="p-6 text-sm text-muted-foreground">Loading…</p>
+        <p className="p-6 text-sm text-muted-foreground">
+          {error != null ? "Pull request unavailable. Use Refresh to try again." : "Loading…"}
+        </p>
       ) : (
         <div className="min-h-0 flex-1">
           {tab === "conversation" && <ConversationTab detail={detail} />}

@@ -1,6 +1,26 @@
 import { expect, test } from "@playwright/test"
 import { fakeGitHub } from "./fake-github"
 
+test("failed sign-in shows a toast and keeps the recovery message", async ({ page }) => {
+  await fakeGitHub(page)
+  await page.route("https://api.github.com/user", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Bad credentials" }),
+    }),
+  )
+  await page.goto("/")
+  await page.getByLabel("Personal access token").fill("ghp_invalid")
+  await page.getByRole("button", { name: "Sign in" }).click()
+
+  await expect(
+    page.locator("[data-sonner-toast]").filter({ hasText: "Sign-in failed" }),
+  ).toBeVisible()
+  await expect(page.getByRole("alert")).toContainText("Bad credentials")
+  await expect(page.getByLabel("Personal access token")).toHaveValue("ghp_invalid")
+})
+
 test("sign in, see groups and pull requests, open a pull request", async ({ page }) => {
   await fakeGitHub(page)
   await page.goto("/")

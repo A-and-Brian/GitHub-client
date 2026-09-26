@@ -4,7 +4,10 @@ import { Button } from "@github-client/ui/components/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@github-client/ui/components/dropdown-menu"
 import { Kbd } from "@github-client/ui/components/kbd"
@@ -15,6 +18,7 @@ import {
   BuildingIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  DownloadIcon,
   InboxIcon,
   MenuIcon,
   SearchIcon,
@@ -24,9 +28,12 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { useClient, useJobStatus, useSession } from "@/app/client"
+import { showError, useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
+import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
+import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
 const GROUP_ICONS = { me: UserIcon, org: BuildingIcon, team: UsersIcon, starred: StarIcon }
@@ -188,6 +195,14 @@ export function InboxScopeChooser() {
 
 export function AccountSyncFooter() {
   const { client, viewer } = useSession()
+  const [version, setVersion] = useState<string>()
+
+  useEffect(() => {
+    void appVersion()
+      .then(setVersion)
+      .catch((error) => showError("Could not read app version", error))
+  }, [])
+
   return (
     <footer className="flex min-h-12 items-center gap-2 border-t p-2">
       <DropdownMenu>
@@ -196,12 +211,27 @@ export function AccountSyncFooter() {
           <span className="truncate">{viewer.login}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
+          {isDesktop && (
+            <>
+              <DropdownMenuGroup>
+                {version && <DropdownMenuLabel>GitHub-client {version}</DropdownMenuLabel>}
+                <DropdownMenuItem onClick={() => void checkForUpdates({ manual: true })}>
+                  Check for updates
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuItem
             onClick={async () => {
-              localStorage.setItem(SIGNED_OUT_KEY, "1")
-              localStorage.removeItem(VIEWER_KEY)
-              await client.signOut()
-              window.location.reload()
+              try {
+                localStorage.setItem(SIGNED_OUT_KEY, "1")
+                localStorage.removeItem(VIEWER_KEY)
+                await client.signOut()
+                window.location.reload()
+              } catch (error) {
+                showError("Could not sign out", error)
+              }
             }}
           >
             Sign out
@@ -209,6 +239,7 @@ export function AccountSyncFooter() {
         </DropdownMenuContent>
       </DropdownMenu>
       <SyncIndicator />
+      <UpdateButton />
     </footer>
   )
 }
@@ -318,10 +349,32 @@ function GroupNavNode({
   )
 }
 
+/** Shows when a newer version is available; installs it and restarts. */
+function UpdateButton() {
+  const update = useUpdateState()
+  if (update.status !== "available" && update.status !== "installing") return null
+  const installing = update.status === "installing"
+  const progress =
+    installing && update.progress !== undefined ? ` ${Math.round(update.progress * 100)}%` : ""
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      disabled={installing}
+      title={`Install version ${update.version} and restart`}
+      onClick={() => void installUpdate()}
+    >
+      <DownloadIcon />
+      {installing ? `Updating${progress}` : "Update"}
+    </Button>
+  )
+}
+
 /** Remaining GraphQL budget plus a dot that shows background sync errors. */
 function SyncIndicator() {
   const client = useClient()
   const groups = useJobStatus(jobKeys.groups)
+  useErrorToast(groups?.error, { id: "groups-sync-error", title: "Could not refresh groups" })
   const graphql = useSyncExternalStore(
     (listener) => client.rest.rateLimits.subscribe(listener),
     () => client.rest.rateLimits.get("graphql"),

@@ -7,6 +7,7 @@ import { Link, useNavigate } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { runRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
 import { RepositoryContext } from "@/components/repository-context"
@@ -27,6 +28,15 @@ export function RunPage() {
   useWatch((c) => c.watchRunJobs(repo, runId), [repo, runId])
   useWatch((c) => c.watchRuns(repo), [repo])
   const jobsStatus = useJobStatus(jobKeys.runJobs(runId))
+  const runsStatus = useJobStatus(jobKeys.runs(repo))
+  useErrorToast(jobsStatus?.error, {
+    id: `actions-run-jobs-error:${runId}`,
+    title: `Could not refresh jobs for run ${runId}`,
+  })
+  useErrorToast(runsStatus?.error, {
+    id: `actions-runs-error:${repo}`,
+    title: `Could not refresh ${repo} workflow runs`,
+  })
   const run = useRun(repo, runId, jobsStatus?.lastSuccess)
   const jobs = useLiveQuery(
     (q) =>
@@ -159,7 +169,7 @@ export function RunPage() {
           {jobs.length === 0 && (
             <p className="p-4 text-sm text-muted-foreground">
               {jobsStatus?.error
-                ? `Could not load jobs: ${String((jobsStatus.error as Error).message ?? jobsStatus.error)}`
+                ? "Could not load jobs. Use Refresh to try again."
                 : jobsStatus?.lastSuccess
                   ? "This run has no jobs."
                   : "Loading jobs…"}
@@ -189,7 +199,12 @@ function useRun(repo: string, runId: number, jobsSyncedAt: number | undefined) {
     [runId],
   ).data[0]
   const [fetched, setFetched] = useState<WorkflowRun>()
+  const [fetchFailure, setFetchFailure] = useState<{ runId: number; error: unknown }>()
   const runsSynced = useJobStatus(jobKeys.runs(repo))?.lastSuccess !== undefined
+  useErrorToast(synced || fetchFailure?.runId !== runId ? undefined : fetchFailure.error, {
+    id: `actions-run-detail-error:${repo}:${runId}`,
+    title: `Could not load workflow run ${runId}`,
+  })
 
   // Follows the jobs poll so that the fallback run status stays current too.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch on each jobs sync
@@ -197,8 +212,12 @@ function useRun(repo: string, runId: number, jobsSyncedAt: number | undefined) {
     if (synced || !runsSynced) return
     let cancelled = false
     client.fetchRun(repo, runId).then(
-      (run) => !cancelled && setFetched(run),
-      () => {},
+      (run) => {
+        if (cancelled) return
+        setFetched(run)
+        setFetchFailure(undefined)
+      },
+      (error) => !cancelled && setFetchFailure({ runId, error }),
     )
     return () => {
       cancelled = true

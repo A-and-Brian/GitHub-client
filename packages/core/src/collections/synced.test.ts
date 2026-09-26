@@ -46,6 +46,89 @@ test("replacing with identical rows writes nothing to SQLite", async () => {
   expect(latestRowVersion(db.file, "rows")).toBeGreaterThan(before)
 })
 
+test("persisted writes resume after cleanup and restart", async () => {
+  const options = {
+    id: "jobs",
+    getKey: (row: { id: number; runId: number; name: string }) => row.id,
+    schemaVersion: 1,
+  }
+  const synced = createSyncedCollection({ ...options, persistence: db.open() })
+  await synced.collection.preload()
+  await synced.collection.cleanup()
+
+  const job = { id: 108471660925, runId: 36266350823, name: "web" }
+  await synced.replace([job], (row) => row.runId === job.runId)
+
+  expect(synced.collection.get(job.id)).toMatchObject(job)
+  expect(latestRowVersion(db.file, "jobs")).toBeGreaterThan(0)
+  await synced.collection.cleanup()
+
+  const reopened = createSyncedCollection({ ...options, persistence: db.open() })
+  await reopened.collection.preload()
+  expect(reopened.collection.get(job.id)).toMatchObject(job)
+  await reopened.collection.cleanup()
+})
+
+test.each([true, false])(
+  "updates and deletes rows across repeated cleanup (persisted: %s)",
+  async (persisted) => {
+    const synced = createSyncedCollection<Row, string>({
+      id: "rows",
+      getKey: (row) => row.id,
+      persistence: persisted ? db.open() : undefined,
+      schemaVersion: 1,
+    })
+    await synced.upsert([
+      { id: "one", title: "original" },
+      { id: "two", title: "remove by replacement" },
+    ])
+    await synced.collection.cleanup()
+
+    await synced.replace([{ id: "one", title: "updated" }], () => true)
+    expect([...synced.collection.values()]).toMatchObject([{ id: "one", title: "updated" }])
+    await synced.collection.cleanup()
+
+    await synced.upsert([{ id: "three", title: "added after restart" }])
+    await synced.remove(["three", "one"])
+    expect(synced.collection.size).toBe(0)
+    await synced.collection.cleanup()
+    await synced.collection.preload()
+    expect(synced.collection.size).toBe(0)
+    await synced.collection.cleanup()
+  },
+)
+
+test("failed writes after persisted cleanup and restart roll back and can retry", async () => {
+  const synced = createRows()
+  await synced.collection.preload()
+  await synced.collection.cleanup()
+  await synced.upsert([{ id: "1", title: "one" }])
+
+  const triggerDb = new Database(db.file)
+  const table = createPersistedTableName("rows", "c")
+  triggerDb.exec(
+    `CREATE TRIGGER fail_insert BEFORE INSERT ON "${table}" BEGIN SELECT RAISE(ABORT, 'injected persistence failure'); END;`,
+  )
+  try {
+    await expect(synced.upsert([{ id: "1", title: "changed" }])).rejects.toThrow(
+      "injected persistence failure",
+    )
+    expect(synced.collection.get("1")).toMatchObject({ id: "1", title: "one" })
+
+    const reloaded = createRows()
+    await reloaded.collection.preload()
+    expect(reloaded.collection.get("1")).toMatchObject({ id: "1", title: "one" })
+    await reloaded.collection.cleanup()
+
+    triggerDb.exec("DROP TRIGGER fail_insert")
+    await synced.upsert([{ id: "1", title: "retried" }])
+    expect(synced.collection.get("1")).toMatchObject({ id: "1", title: "retried" })
+  } finally {
+    await synced.collection.cleanup()
+    triggerDb.close()
+  }
+})
+
 test.each([
   {
     name: "insert",

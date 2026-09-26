@@ -10,6 +10,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 import { ContributionCalendar } from "@/components/contribution-calendar"
 import { useInboxDrag } from "./inbox-drag"
@@ -55,6 +56,12 @@ export function Inbox() {
   useWatch((c) => c.watchGroup("me"), [])
   const status = useJobStatus(jobKeys.groupPulls("me"))
   useEffect(() => () => cancelInboxDragOnUnmount(), [])
+  useErrorToast(status?.error, { id: "inbox-sync-error", title: "Could not refresh inbox" })
+  const [reconcileError, setReconcileError] = useState<unknown>(null)
+  useErrorToast(reconcileError, {
+    id: "inbox-reconcile-error",
+    title: "Could not update inbox state",
+  })
 
   const {
     fullEntries,
@@ -130,9 +137,18 @@ export function Inbox() {
   }, [])
   // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile when preferences hydrate or change
   useEffect(() => {
+    let cancelled = false
     void client
       .reconcileInboxState(viewer.login, pulls, now, groups)
-      .catch((error: unknown) => toast.error(String(error)))
+      .then(() => {
+        if (!cancelled) setReconcileError(null)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setReconcileError(error)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [client, viewer.login, pulls, groups, preferences, now])
   const dragDisabled = failures || !orderReady
 

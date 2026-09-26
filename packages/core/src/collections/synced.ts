@@ -32,18 +32,21 @@ type Writer<T extends object, K extends Key> = Parameters<SyncConfig<T, K>["sync
 export function createSyncedCollection<T extends object, K extends Key>(
   options: SyncedCollectionOptions<T, K>,
 ): SyncedCollection<T, K> {
-  let resolveWriter: (writer: Writer<T, K>) => void
-  const writerReady = new Promise<Writer<T, K>>((resolve) => {
-    resolveWriter = resolve
-  })
+  let rollbackWriter: Writer<T, K> | undefined
+  let activeWriter: Writer<T, K> | undefined
   const sync: SyncConfig<T, K> = {
     sync: (params) => {
-      resolveWriter(params)
+      activeWriter = params
       params.markReady()
+      return () => {
+        if (activeWriter === params) {
+          activeWriter = undefined
+          rollbackWriter = undefined
+        }
+      }
     },
   }
   const config = { id: options.id, getKey: options.getKey, sync, startSync: true }
-  let rollbackWriter: Writer<T, K> | undefined
   const collection = (
     options.persistence
       ? (() => {
@@ -62,7 +65,21 @@ export function createSyncedCollection<T extends object, K extends Key>(
                 // commits. Keep the underlying sync callbacks so a failed write
                 // can publish an inverse change without writing to SQLite again.
                 rollbackWriter = params
-                return persistedSync.sync(params)
+                const result = persistedSync.sync(params)
+                const cleanup =
+                  typeof result === "function"
+                    ? result
+                    : result && typeof result === "object"
+                      ? result.cleanup
+                      : undefined
+                if (!cleanup) return result
+                return {
+                  ...(typeof result === "object" ? result : {}),
+                  cleanup: () => {
+                    if (rollbackWriter === params) rollbackWriter = undefined
+                    cleanup()
+                  },
+                }
               },
             },
           })
@@ -77,8 +94,9 @@ export function createSyncedCollection<T extends object, K extends Key>(
     apply: (writer: Writer<T, K>) => void,
   ): Promise<void> => {
     const next = queue.then(async () => {
-      const writer = await writerReady
       await collection.preload()
+      const writer = activeWriter
+      if (!writer) throw new Error(`Collection "${options.id}" has no active sync writer`)
       const affectedKeys = typeof keys === "function" ? keys() : keys
       const before = new Map(
         affectedKeys.map((key) => {

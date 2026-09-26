@@ -75,7 +75,9 @@ test("snooze survives reload and can be restored", async ({ page }) => {
   ).toBeVisible()
 })
 
-test("settings save changes to GitHub and preserve the draft on rejection", async ({ page }) => {
+test("settings save changes to GitHub and toast rejection while preserving the draft", async ({
+  page,
+}) => {
   const options = { settingsError: 0 }
   const requests = await fakeGitHub(page, options)
   await signIn(page)
@@ -89,8 +91,20 @@ test("settings save changes to GitHub and preserve the draft on rejection", asyn
   options.settingsError = 403
   await page.getByLabel("Description", { exact: true }).fill("Retained draft")
   await page.getByRole("button", { name: "Save changes" }).click()
-  await expect(page.getByRole("alert")).toContainText("Organization policy")
+  const saveError = page
+    .locator("[data-sonner-toast]")
+    .filter({ hasText: "Could not save settings for acme/api" })
+  await expect(saveError).toContainText("Organization policy")
+  await expect(page.getByRole("alert")).toContainText("Your draft is still here. Try saving again.")
   await expect(page.getByLabel("Description", { exact: true })).toHaveValue("Retained draft")
+
+  await page.getByRole("checkbox", { name: "Squash merging" }).uncheck()
+  await page.getByRole("checkbox", { name: "Rebase merging" }).uncheck()
+  await page.getByRole("checkbox", { name: "Merge commits" }).uncheck()
+  await expect(page.getByRole("alert")).toContainText("At least one merge method")
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled()
+  await page.getByRole("checkbox", { name: "Merge commits" }).check()
+  await expect(page.getByRole("alert")).toHaveCount(0)
 })
 
 test("settings are read-only without repository admin access", async ({ page }) => {
@@ -100,6 +114,32 @@ test("settings are read-only without repository admin access", async ({ page }) 
   await expect(page.getByLabel("Description", { exact: true })).toBeDisabled()
   await expect(page.getByText(/Settings are read-only/)).toBeVisible()
   expect(requests.filter((r) => r.method === "PATCH")).toEqual([])
+})
+
+test("settings load failure toasts and can recover with Retry", async ({ page }) => {
+  await fakeGitHub(page)
+  await signIn(page)
+  let fail = true
+  await page.route("https://api.github.com/repos/acme/api", async (route) => {
+    if (fail) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Temporary GitHub failure" }),
+      })
+    } else {
+      await route.fallback()
+    }
+  })
+  await page.goto("/#/settings/acme/api")
+
+  await expect(
+    page.locator("[data-sonner-toast]").filter({ hasText: "Could not load settings for acme/api" }),
+  ).toBeVisible()
+  await expect(page.getByText("Could not load repository settings.", { exact: true })).toBeVisible()
+  fail = false
+  await page.getByRole("button", { name: "Retry", exact: true }).click()
+  await expect(page.getByLabel("Description", { exact: true })).toHaveValue("API service")
 })
 
 test("inbox and organization navigation work at narrow widths", async ({ page }) => {

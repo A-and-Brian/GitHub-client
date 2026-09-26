@@ -10,7 +10,9 @@ import {
 import { useLiveQuery } from "@tanstack/react-db"
 import { useNavigate } from "@tanstack/react-router"
 import { useClient } from "@/app/client"
+import { checkForUpdates } from "@/app/updates"
 import { useTheme } from "@/components/theme-provider"
+import { isDesktop } from "@/platform"
 
 const MAX_PULLS = 200
 
@@ -142,6 +144,14 @@ export function CommandPalette({
             >
               Refresh groups
             </CommandItem>
+            {isDesktop && (
+              <CommandItem
+                value="check for updates upgrade version install"
+                onSelect={() => run(() => void checkForUpdates({ manual: true }))}
+              >
+                Check for updates
+              </CommandItem>
+            )}
           </CommandGroup>
         </CommandList>
       </Command>

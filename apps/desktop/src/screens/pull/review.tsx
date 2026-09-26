@@ -16,6 +16,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useState } from "react"
 import { toast } from "sonner"
 import { useClient, useSession } from "@/app/client"
+import { showError } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 
 const EVENTS: Array<{ value: ReviewEvent; label: string; hint: string }> = [
@@ -51,7 +52,7 @@ export function ReviewButton({ detail }: { detail: PullRequestDetail }) {
       setBody("")
       setOpen(false)
     } catch (e) {
-      toast.error(`Review failed: ${e instanceof Error ? e.message : e}`)
+      showError("Review failed", e)
     } finally {
       setBusy(false)
     }
