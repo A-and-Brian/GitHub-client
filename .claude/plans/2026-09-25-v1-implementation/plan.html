@@ -1,0 +1,124 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GitHub-client v1 implementation plan (rev 2)</title><style>body{max-width:900px;margin:2rem auto;padding:0 1.25rem;font:16px/1.6 system-ui,sans-serif;color:#1f2328;background:#fff}
+h1{border-bottom:2px solid #d0d7de;padding-bottom:.4rem}h2{margin-top:2.2rem;border-bottom:1px solid #d0d7de;padding-bottom:.3rem}
+h3{margin-top:1.6rem;color:#0969da}code{background:#f6f8fa;padding:.1rem .35rem;border-radius:4px;font-size:.9em}
+pre{background:#f6f8fa;padding:1rem;border-radius:6px;overflow:auto}pre code{padding:0;background:none}li{margin:.2rem 0}
+table{border-collapse:collapse;width:100%;font-size:.92em}th,td{border:1px solid #d0d7de;padding:.4rem .6rem;text-align:left}th{background:#f6f8fa}
+@media (prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}code,pre,th{background:#161b22}h3{color:#58a6ff}h1,h2,th,td{border-color:#30363d}}</style></head><body><h1>GitHub-client v1 — Implementation Plan</h1>
+<p>Date: 2026-09-25
+Status: Draft for review (revision 2)
+Parent plan: <code>.claude/plans/2026-09-25-github-client/plan.md</code> (approved)</p>
+<p>Revision 2 changes, from review feedback:</p>
+<ul>
+<li>Client data layer is now TanStack DB with its SQLite persistence adapters (section 3.1). Drizzle is evaluated and deferred to the phase 2 server.</li>
+<li>Monorepo uses Turborepo (section 4).</li>
+<li>Tauri system libraries are installed; the desktop binary is built and verified on this host.</li>
+</ul>
+<h2>1. Scope</h2>
+<p>Build v1 as defined in the parent plan: token auth, auto repo groups, PR list, PR detail, diff review with write actions, Actions (status, runs, logs, rerun, cancel, dispatch), local SQLite cache with ETag polling, command palette. Desktop first (Tauri 2).</p>
+<h2>2. Environment findings</h2>
+<ul>
+<li>Available: Bun 1.4, Node 26, Rust 1.98 (<code>~/.cargo/bin</code>), Git Town 24, <code>gh</code> (logged in).</li>
+<li>Tauri Linux system libraries: installed (<code>webkit2gtk-4.1</code> 2.52.6, <code>gtk+-3.0</code> 3.24.52, <code>libsoup-3.0</code> 3.6.6).</li>
+<li>Verified: <code>api.github.com</code> allows CORS from any origin, accepts <code>If-None-Match</code>, and exposes <code>ETag</code>, <code>Link</code>, <code>X-Poll-Interval</code>, and rate-limit headers. The UI can also run in a plain browser during development.</li>
+</ul>
+<h2>3. Design decisions made in this plan</h2>
+<h3>3.1 Client data: TanStack DB with SQLite persistence</h3>
+<p>The UI reads data from <strong>TanStack DB</strong> collections. TanStack DB (<code>@tanstack/db</code> 0.9, <code>@tanstack/react-db</code>) is a reactive in-memory store. Live queries (joins, filters, ordering) update incrementally, and mutations apply optimistically and roll back on failure.</p>
+<p>Persistence uses the official TanStack SQLite adapters (version 0.2.x). They store collection rows in SQLite and hydrate collections at startup:</p>
+<ul>
+<li>Desktop: <code>@tanstack/tauri-db-sqlite-persistence</code> on the official <code>tauri-plugin-sql</code>. No custom Rust code.</li>
+<li>Browser development and the later hosted web app: <code>@tanstack/browser-db-sqlite-persistence</code> on <code>wa-sqlite</code>.</li>
+<li>Tests: <code>@tanstack/node-db-sqlite-persistence</code>.</li>
+<li>Future mobile: <code>@tanstack/expo-db-sqlite-persistence</code>.</li>
+</ul>
+<p>Data flow:</p>
+<ol>
+<li>At startup, collections hydrate from SQLite. The UI renders the last known state immediately.</li>
+<li>Sync jobs in <code>packages/core</code> poll GitHub with ETags and write changes into the collections. TanStack DB persists them to SQLite.</li>
+<li>Write actions (comment, review, merge, rerun) run as TanStack DB mutations or actions. Their handlers call the GitHub API; the UI updates optimistically.</li>
+<li>ETags and sync cursors live in a small local-only persisted collection, keyed by request URL.</li>
+</ol>
+<p>v1 collections: <code>repos</code>, <code>groups</code>, <code>pullRequests</code>, <code>prDetails</code>, <code>prFiles</code>, <code>reviewThreads</code>, <code>checkRuns</code>, <code>workflows</code>, <code>workflowRuns</code>, <code>jobs</code>, <code>requestCache</code>.</p>
+<p><strong>Drizzle: not in v1.</strong> The TanStack DB persistence adapters own their SQLite tables and store rows without a separate schema. Drizzle on the client would add a second schema and query layer over the same data, with no gain. Drizzle fits the phase 2 server, where a relational Postgres schema holds webhook data and custom features.</p>
+<p><strong>Phase 2 seam.</strong> Screens import collections from <code>packages/core</code> and never touch SQL. In phase 2 the custom GitHub sync behind each collection is replaced by a server-backed sync. TanStack DB already ships Electric and PowerSync collection types, so those two engines become the natural fit. Zero is a weaker fit.</p>
+<p><strong>Risk.</strong> TanStack DB is pre-1.0 and the persistence packages are at 0.2. Mitigation: all collection definitions live in <code>packages/core/src/collections</code>, so a breaking upgrade touches one folder. Milestone 2 starts with a spike that proves persisted collections with custom sync under Tauri and in the browser. Fallback if the spike fails: TanStack DB without persistence, plus a plain SQLite snapshot written by the sync jobs.</p>
+<h3>3.2 Platform services are injected</h3>
+<p><code>packages/core</code> receives a <code>Platform</code> object: <code>fetch</code>, <code>persistence</code>, <code>secrets</code> (get, set, delete token), and optional <code>ghAuthToken()</code>.</p>
+<ul>
+<li>Desktop: Tauri HTTP plugin <code>fetch</code> (no CORS limits, needed for Actions log redirects), Tauri SQL plugin persistence, OS keychain via the <code>keyring</code> crate, <code>gh auth token</code> via a Rust command.</li>
+<li>Browser development: <code>window.fetch</code>, <code>wa-sqlite</code> persistence, token held in <code>sessionStorage</code> only (development convenience, clearly labelled), no <code>gh</code> import.</li>
+</ul>
+<h3>3.3 Rust side stays small</h3>
+<p><code>apps/desktop/src-tauri</code> registers the <code>sql</code> and <code>http</code> plugins and adds two small commands: keychain get, set, and delete, and <code>gh auth token</code>. No separate Rust crate is needed.</p>
+<h3>3.4 API usage per feature</h3>
+<table>
+<thead>
+<tr><th>Feature</th><th>API</th><th>Freshness</th></tr>
+</thead>
+<tbody>
+<tr><td>Viewer, orgs, teams, starred repos</td><td>REST, ETag</td><td>background</td></tr>
+<tr><td>PR list per group</td><td>REST search (<code>is:pr is:open org:… review-requested:@me …</code>), ETag</td><td>active 15 s, background 2 min</td></tr>
+<tr><td>PR detail (body HTML, timeline, reviews, threads, checks)</td><td>GraphQL, one request</td><td>on open, then active polling</td></tr>
+<tr><td>PR files and patches</td><td>REST <code>pulls/{n}/files</code>, paginated, ETag</td><td>on open</td></tr>
+<tr><td>Review writes</td><td>REST reviews and comments endpoints</td><td>on action</td></tr>
+<tr><td>Merge</td><td>REST <code>pulls/{n}/merge</code></td><td>on action</td></tr>
+<tr><td>Workflow runs, jobs, steps</td><td>REST, ETag</td><td>active 15 s</td></tr>
+<tr><td>Job logs</td><td>REST <code>jobs/{id}/logs</code> (redirect to blob storage)</td><td>poll while running</td></tr>
+<tr><td>Rerun, rerun failed, cancel, dispatch</td><td>REST</td><td>on action</td></tr>
+</tbody>
+</table>
+<p>Rendered Markdown comes from GraphQL <code>bodyHTML</code>, so no Markdown renderer is needed for GitHub content.</p>
+<p>Search API note: search has a lower rate limit (30 per minute). Polling respects it with a shared request budget in the scheduler.</p>
+<h3>3.5 Known API limitation for live logs</h3>
+<p>The public API does not stream logs of a step that is still running. v1 shows live job and step status (polled) and fetches the job log when available, refreshing while the job runs. True line-by-line streaming like the website is not possible through the public API.</p>
+<h2>4. Repository layout</h2>
+<p>A Turborepo monorepo on Bun workspaces. <code>turbo</code> runs <code>build</code>, <code>typecheck</code>, <code>lint</code>, and <code>test</code> across packages with caching and dependency ordering.</p>
+<pre><code>package.json              Bun workspaces, root scripts calling turbo
+turbo.json                task pipeline
+biome.json                lint and format
+apps/
+  desktop/
+    src/                  React app: routes, screens, platform adapters (Tauri, browser)
+    src-tauri/            Tauri 2 app: sql and http plugins, keychain and gh commands
+packages/
+  core/
+    src/github/           REST client (ETag, pagination, rate limit), GraphQL client
+    src/auth/             AuthProvider, TokenAuthProvider
+    src/collections/      TanStack DB collection definitions and persistence wiring
+    src/sync/             poll scheduler, per-feature sync jobs
+    src/actions/          write actions (reviews, merge, rerun, cancel, dispatch)
+    src/domain/           types: Repo, Group, PullRequest, Review, CheckRun, WorkflowRun, Job
+    src/diff/             unified diff parser, line mapping for comments
+    src/logs/             ANSI parser, log search
+  ui/                     shadcn on Base UI, ReUI, shared components
+  tsconfig/               shared TypeScript configs
+</code></pre>
+<h2>5. Milestones</h2>
+<p>Each milestone ends with passing tests and a commit.</p>
+<ol>
+<li><strong>Workspace skeleton.</strong> Turborepo on Bun workspaces, TypeScript, Biome, Vitest, Tailwind v4, shadcn on Base UI plus ReUI in <code>packages/ui</code>, Vite app in <code>apps/desktop</code>. GitHub Actions CI for lint, type check, and tests.</li>
+<li><strong>Core foundation.</strong> Spike first: a persisted collection with custom sync, running in Tauri and in the browser. Then <code>Platform</code>, REST client with ETags stored in <code>requestCache</code>, pagination, rate-limit tracking, GraphQL client, <code>TokenAuthProvider</code>, and the poll scheduler (active and background intervals, <code>X-Poll-Interval</code>, search budget).</li>
+<li><strong>Native side.</strong> <code>src-tauri</code> with SQL and HTTP plugins, keychain and <code>gh</code> commands, capabilities; desktop platform adapter in TypeScript; <code>bun run desktop:dev</code> launches the app.</li>
+<li><strong>Auth and shell UI.</strong> Token setup screen (paste token, import from <code>gh</code>, <code>GITHUB_TOKEN</code>), scope check via <code>X-OAuth-Scopes</code>, app layout, router, command palette, global shortcuts.</li>
+<li><strong>Repo groups and PR list.</strong> Org, team, and starred groups; PR list with mine, review requested, all open; filters; keyboard navigation; instant render from persisted collections, refresh behind.</li>
+<li><strong>PR detail.</strong> GraphQL load; description, conversation, reviews, checks summary.</li>
+<li><strong>Diff review.</strong> Diff parser, virtualized file and line list, Shiki highlighting in a web worker, existing review threads inline, pending review with line comments and suggestions, submit (approve, request changes, comment), merge with method choice.</li>
+<li><strong>Actions.</strong> Check runs on PRs and groups, workflow run list per repo, job and step tree, logs viewer (virtualized, ANSI colors, search), rerun, rerun failed, cancel, <code>workflow_dispatch</code> with inputs read from the workflow YAML.</li>
+<li><strong>Finish.</strong> README with setup and development instructions, Tauri bundle configuration, final pass on tests.</li>
+</ol>
+<h2>6. Verification</h2>
+<ul>
+<li><code>packages/core</code>: Vitest against recorded GitHub API fixtures (sanitized JSON), with collections persisted through the Node SQLite adapter. Covers ETag handling, pagination, sync into collections, hydration after restart, diff parsing and comment line mapping, ANSI parsing.</li>
+<li>Rust: <code>cargo check</code> and <code>cargo clippy</code>. The Rust code is too thin to need its own tests.</li>
+<li>UI: run the Vite app in a browser preview and the Tauri app on this host, with your <code>gh</code> token, read-only, to check each screen against real data.</li>
+<li>Write actions (comment, review, merge, rerun, cancel, dispatch): tested against fixtures only. No writes to real repositories unless you name a scratch repository for it.</li>
+</ul>
+<h2>7. Working method</h2>
+<ul>
+<li>Main session builds milestones 1 to 4 (foundation, shared conventions).</li>
+<li>Milestones 7 and 8 are large and mostly independent; they may be delegated to Opus subagents one at a time on this branch, with the main session reviewing each result.</li>
+<li>Commits per milestone on the current branch. No push or PR unless you ask.</li>
+</ul>
+<h2>8. Out of scope for v1</h2>
+<p>Notifications, issues, user-defined groups, saved queries, code browsing, local repositories, Git Town, agents, server, mobile, GitHub App auth.</p>
+</body></html>

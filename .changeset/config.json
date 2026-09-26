@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
+  "changelog": ["@changesets/changelog-github", { "repo": "A-and-Brian/GitHub-client" }],
+  "commit": false,
+  "baseBranch": "main",
+  "access": "restricted",
+  "updateInternalDependencies": "patch",
+  "privatePackages": { "version": true, "tag": true },
+  "ignore": ["@github-client/core", "@github-client/ui"]
+}
