@@ -14,8 +14,8 @@ import { Textarea } from "@github-client/ui/components/textarea"
 import { cn } from "@github-client/ui/lib/utils"
 import { ChevronDownIcon, ChevronRightIcon, MessageSquareIcon, PlusIcon } from "lucide-react"
 import { type CSSProperties, type KeyboardEvent, type ReactNode, useState } from "react"
-import { toast } from "sonner"
 import { useClient } from "@/app/client"
+import { showError } from "@/app/errors"
 import { UserAvatar } from "@/components/avatar"
 import { GitHubHtml } from "@/components/github-html"
 import { RelativeTime } from "@/components/time"
@@ -235,7 +235,7 @@ export function ThreadCard({
     try {
       await client.setThreadResolved(detail.repo, detail.number, thread.id, !thread.isResolved)
     } catch (e) {
-      toast.error(`Could not update the thread: ${e instanceof Error ? e.message : e}`)
+      showError("Could not update the thread", e)
     } finally {
       setBusy(false)
     }
@@ -318,7 +318,7 @@ function ReplyBox({ detail, thread }: { detail: PullRequestDetail; thread: Revie
       setBodyState("")
       setOpen(false)
     } catch (e) {
-      toast.error(`Reply failed: ${e instanceof Error ? e.message : e}`)
+      showError("Reply failed", e)
     } finally {
       setBusy(false)
     }

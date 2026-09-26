@@ -5,6 +5,7 @@ import { Label } from "@github-client/ui/components/label"
 import { Alert, AlertDescription, AlertTitle } from "@github-client/ui/components/reui/alert"
 import { useState } from "react"
 import { toast } from "sonner"
+import { showError, useErrorToast } from "@/app/errors"
 import { isDesktop, openExternal } from "@/platform"
 
 const NEW_TOKEN_URL = `https://github.com/settings/tokens/new?description=GitHub-client&scopes=${REQUIRED_SCOPES.join(",")},notifications`
@@ -21,6 +22,7 @@ export function Setup({
   const [token, setToken] = useState("")
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState(error)
+  useErrorToast(error, { id: "setup-error", title: "Sign-in required" })
 
   const signIn = async (value: string) => {
     setBusy(true)
@@ -34,22 +36,44 @@ export function Setup({
       }
       onSignedIn(check.viewer)
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : String(e))
+      const detail = e instanceof Error ? e.message : String(e)
+      setProblem(detail)
+      showError("Sign-in failed", e)
     } finally {
       setBusy(false)
     }
   }
 
   const useEnvToken = async () => {
-    const envToken = await client.platform.envToken?.()
-    if (envToken) await signIn(envToken)
-    else setProblem("GITHUB_TOKEN is not set in the environment the app was started from.")
+    try {
+      const envToken = await client.platform.envToken?.()
+      if (envToken) await signIn(envToken)
+      else {
+        const message = "GITHUB_TOKEN is not set in the environment the app was started from."
+        setProblem(message)
+        showError("GITHUB_TOKEN is unavailable", message)
+      }
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e)
+      setProblem(`Could not read GITHUB_TOKEN: ${detail}`)
+      showError("Could not read GITHUB_TOKEN", e)
+    }
   }
 
   const importFromGh = async () => {
-    const ghToken = await client.platform.ghToken?.()
-    if (ghToken) await signIn(ghToken)
-    else setProblem("The GitHub CLI is not installed or not logged in (`gh auth login`).")
+    try {
+      const ghToken = await client.platform.ghToken?.()
+      if (ghToken) await signIn(ghToken)
+      else {
+        const message = "The GitHub CLI is not installed or not logged in (`gh auth login`)."
+        setProblem(message)
+        showError("GitHub CLI token unavailable", message)
+      }
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e)
+      setProblem(`Could not read a token from GitHub CLI: ${detail}`)
+      showError("Could not read GitHub CLI token", e)
+    }
   }
 
   return (

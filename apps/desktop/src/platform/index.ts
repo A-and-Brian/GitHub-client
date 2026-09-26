@@ -1,5 +1,6 @@
 import type { Platform } from "@github-client/core"
 import { isTauri } from "@tauri-apps/api/core"
+import { showError } from "@/app/errors"
 
 export const isDesktop = isTauri()
 
@@ -10,10 +11,14 @@ export async function createPlatform(): Promise<Platform> {
 
 /** Opens a URL in the system browser. */
 export async function openExternal(url: string): Promise<void> {
-  if (isDesktop) {
-    const { openUrl } = await import("@tauri-apps/plugin-opener")
-    await openUrl(url)
-  } else {
-    window.open(url, "_blank", "noopener")
+  try {
+    if (isDesktop) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener")
+      await openUrl(url)
+    } else {
+      window.open(url, "_blank", "noopener")
+    }
+  } catch (error) {
+    showError("Could not open link", error)
   }
 }

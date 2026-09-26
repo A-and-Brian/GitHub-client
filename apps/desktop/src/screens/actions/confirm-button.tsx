@@ -9,6 +9,7 @@ import {
 } from "@github-client/ui/components/dialog"
 import { type ReactNode, useState } from "react"
 import { toast } from "sonner"
+import { showError } from "@/app/errors"
 
 /** A button that asks for confirmation, runs `action`, and reports the outcome in a toast. */
 export function ConfirmButton({
@@ -40,7 +41,7 @@ export function ConfirmButton({
       toast.success(success)
       setOpen(false)
     } catch (e) {
-      toast.error(`${title} failed: ${e instanceof Error ? e.message : e}`)
+      showError(`${title} failed`, e)
     } finally {
       setBusy(false)
     }

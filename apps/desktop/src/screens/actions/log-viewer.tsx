@@ -25,20 +25,19 @@ import {
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useClient } from "@/app/client"
+import { showError, useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 
 const ROW_HEIGHT = 20
 const RUNNING_POLL_MS = 10_000
 
-type LogState =
-  | { status: "loading" }
-  | { status: "ready"; raw: string }
-  | { status: "error"; message: string; pending: boolean }
+type LogFailure = { error: unknown; message?: string; pending: boolean }
+type LogState = { raw?: string; loading: boolean; failure?: LogFailure }
 
 /** Fetches a job's log, and refetches it every few seconds while the job runs. */
 function useJobLog(job: Job) {
   const client = useClient()
-  const [state, setState] = useState<LogState>({ status: "loading" })
+  const [state, setState] = useState<LogState>({ loading: true })
   const [reload, setReload] = useState(0)
   const running = job.status !== "completed"
 
@@ -49,13 +48,14 @@ function useJobLog(job: Job) {
     const load = async () => {
       try {
         const raw = await client.fetchJobLog(job.repo, job.id)
-        if (!cancelled) setState({ status: "ready", raw })
+        if (!cancelled) setState({ raw, loading: false })
       } catch (error) {
-        if (!cancelled) setState((s) => (s.status === "ready" ? s : logError(error, running)))
+        if (!cancelled)
+          setState((s) => ({ ...s, loading: false, failure: logError(error, running) }))
       }
       if (!cancelled && running) timer = setTimeout(load, RUNNING_POLL_MS)
     }
-    setState({ status: "loading" })
+    setState((s) => ({ ...s, loading: s.raw === undefined, failure: undefined }))
     void load()
     return () => {
       cancelled = true
@@ -66,25 +66,28 @@ function useJobLog(job: Job) {
   return { state, reload: () => setReload((n) => n + 1) }
 }
 
-function logError(error: unknown, running: boolean): LogState {
+function logError(error: unknown, running: boolean): LogFailure {
   const status = error instanceof GitHubError ? error.status : undefined
   if (running && status === 404)
-    return { status: "error", pending: true, message: "The log is not available yet." }
+    return { error, pending: true, message: "The log is not available yet." }
   if (status === 410)
-    return { status: "error", pending: false, message: "This log has expired and was deleted." }
+    return { error, pending: false, message: "This log has expired and was deleted." }
   if (status === 404)
     return {
-      status: "error",
+      error,
       pending: false,
       message: "No log found. The job may have been skipped or never started.",
     }
-  const message = error instanceof Error ? error.message : String(error)
-  return { status: "error", pending: false, message: `Could not load the log: ${message}` }
+  return { error, pending: false }
 }
 
 export function LogViewer({ job }: { job: Job }) {
   const { state, reload } = useJobLog(job)
   const running = job.status !== "completed"
+  useErrorToast(state.failure?.pending ? undefined : state.failure?.error, {
+    id: `actions-job-log-error:${job.id}`,
+    title: `Could not load ${job.name} log`,
+  })
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {running && (
@@ -93,20 +96,23 @@ export function LogViewer({ job }: { job: Job }) {
           refreshes every {RUNNING_POLL_MS / 1000} seconds and step status updates above.
         </p>
       )}
-      {state.status === "loading" && (
+      {state.raw === undefined && state.loading && (
         <p className="p-4 text-sm text-muted-foreground">Loading log…</p>
       )}
-      {state.status === "error" && (
+      {state.failure && (
         <div className="flex items-center gap-3 p-4 text-sm">
-          <span className={state.pending ? "text-muted-foreground" : "text-destructive"}>
-            {state.message}
+          <span className={state.failure.pending ? "text-muted-foreground" : "text-destructive"}>
+            {state.failure.message ??
+              (state.raw === undefined
+                ? "Could not load the log. Retry to try again."
+                : "Could not refresh the log. Showing previously loaded output.")}
           </span>
           <Button variant="outline" size="xs" onClick={reload}>
             <RefreshCwIcon /> Retry
           </Button>
         </div>
       )}
-      {state.status === "ready" && <LogLines raw={state.raw} />}
+      {state.raw !== undefined && <LogLines raw={state.raw} />}
     </div>
   )
 }
@@ -172,7 +178,7 @@ function LogLines({ raw }: { raw: string }) {
       await navigator.clipboard.writeText(raw)
       toast.success(`Copied ${lines.length.toLocaleString()} lines`)
     } catch (e) {
-      toast.error(`Copy failed: ${e instanceof Error ? e.message : e}`)
+      showError("Copy failed", e)
     }
   }
 
