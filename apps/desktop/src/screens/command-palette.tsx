@@ -131,13 +131,36 @@ export function CommandPalette({
               )
             })}
           </CommandGroup>
-          <CommandGroup heading="Commands">
+          <CommandGroup heading="Theme">
             <CommandItem
-              value="toggle theme dark light"
-              onSelect={() => run(() => setTheme(theme === "dark" ? "light" : "dark"))}
+              value={`use system theme${theme === "system" ? " current" : ""}`}
+              onSelect={() => run(() => setTheme("system"))}
             >
-              Toggle dark mode
+              Use system theme
+              {theme === "system" && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
             </CommandItem>
+            <CommandItem
+              value={`use light theme${theme === "light" ? " current" : ""}`}
+              onSelect={() => run(() => setTheme("light"))}
+            >
+              Use light theme
+              {theme === "light" && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
+            </CommandItem>
+            <CommandItem
+              value={`use dark theme${theme === "dark" ? " current" : ""}`}
+              onSelect={() => run(() => setTheme("dark"))}
+            >
+              Use dark theme
+              {theme === "dark" && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
+            </CommandItem>
+          </CommandGroup>
+          <CommandGroup heading="Commands">
             <CommandItem
               value="refresh groups sync"
               onSelect={() => run(() => void client.refresh("groups"))}

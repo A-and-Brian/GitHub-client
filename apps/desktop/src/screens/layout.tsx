@@ -7,6 +7,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@github-client/ui/components/dropdown-menu"
@@ -33,6 +35,7 @@ import { useShortcuts } from "@/app/shortcuts"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
+import { useTheme } from "@/components/theme-provider"
 import { WindowChrome } from "@/components/window-chrome"
 import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
@@ -153,6 +156,7 @@ function GlobalGroupRail({
 
 export function AccountSyncFooter() {
   const { client, viewer } = useSession()
+  const { theme, setTheme } = useTheme()
   const [version, setVersion] = useState<string>()
 
   useEffect(() => {
@@ -180,6 +184,18 @@ export function AccountSyncFooter() {
               <DropdownMenuSeparator />
             </>
           )}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={theme}
+              onValueChange={(value) => setTheme(value as typeof theme)}
+            >
+              <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={async () => {
               try {
