@@ -32,14 +32,14 @@ type Writer<T extends object, K extends Key> = Parameters<SyncConfig<T, K>["sync
 export function createSyncedCollection<T extends object, K extends Key>(
   options: SyncedCollectionOptions<T, K>,
 ): SyncedCollection<T, K> {
-  let resolveWriter: (writer: Writer<T, K>) => void
-  const writerReady = new Promise<Writer<T, K>>((resolve) => {
-    resolveWriter = resolve
-  })
+  let activeWriter: Writer<T, K> | undefined
   const sync: SyncConfig<T, K> = {
     sync: (params) => {
-      resolveWriter(params)
+      activeWriter = params
       params.markReady()
+      return () => {
+        activeWriter = undefined
+      }
     },
   }
   const config = { id: options.id, getKey: options.getKey, sync, startSync: true }
@@ -59,8 +59,9 @@ export function createSyncedCollection<T extends object, K extends Key>(
   let queue: Promise<unknown> = Promise.resolve()
   const transact = (apply: (writer: Writer<T, K>) => void): Promise<void> => {
     const next = queue.then(async () => {
-      const writer = await writerReady
       await collection.preload()
+      const writer = activeWriter
+      if (!writer) throw new Error(`Collection "${options.id}" has no active sync writer`)
       writer.begin()
       apply(writer)
       await writer.commit()
