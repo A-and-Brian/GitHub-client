@@ -4,10 +4,16 @@ import { fakeGitHub } from "./fake-github"
 test("a failed PR refresh shows one toast and preserves loaded content", async ({ page }) => {
   await fakeGitHub(page)
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  const filesUrl = "https://api.github.com/repos/acme/api/pulls/7/files*"
+  const initialFilesResponse = page.waitForResponse(filesUrl)
   await page.goto("/#/pr/acme/api/7")
   await expect(page.getByText("Virtualizes the diff rows.")).toBeVisible()
+  // Detail loads before the initial files sync finishes; refresh joins that in-flight sync.
+  await (await initialFilesResponse).finished()
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }).locator("svg"),
+  ).not.toHaveClass(/animate-spin/)
 
-  const filesUrl = "https://api.github.com/repos/acme/api/pulls/7/files*"
   let failedRequests = 0
   const failFiles = async (route: Route) => {
     failedRequests++
