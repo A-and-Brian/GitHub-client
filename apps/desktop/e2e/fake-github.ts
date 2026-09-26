@@ -92,7 +92,8 @@ const files = [
     status: "modified",
     additions: 2,
     deletions: 1,
-    patch: "@@ -1,3 +1,4 @@\n import { a } from \"a\"\n-const rows = all()\n+const rows = visible()\n+const size = 24\n export { rows }",
+    patch:
+      '@@ -1,3 +1,4 @@\n import { a } from "a"\n-const rows = all()\n+const rows = visible()\n+const size = 24\n export { rows }',
   },
 ]
 
@@ -115,13 +116,19 @@ export async function fakeGitHub(page: Page) {
       const query = String((body as { query?: string })?.query ?? "")
       if (query.includes("SearchPulls")) {
         return json(route, {
-          data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [pullNode] } },
+          data: {
+            search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [pullNode] },
+          },
         })
       }
       if (query.includes("PullDetail")) return json(route, { data: { repository: pullDetail } })
     }
     if (url.pathname === "/repos/acme/api/pulls/7/files") return json(route, files)
-    return route.fulfill({ status: 404, contentType: "application/json", body: '{"message":"Not Found"}' })
+    return route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: '{"message":"Not Found"}',
+    })
   })
   return requests
 }
