@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GitHub-client",
-  "version": "0.1.0",
+  "version": "../package.json",
   "identifier": "com.github-client.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -37,6 +37,9 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   }
 }

@@ -56,6 +56,39 @@ The same UI runs in a normal browser for fast iteration. The token is kept in `s
 | `bun run lint` | Lint and format check (Biome) |
 | `bun run format` | Apply Biome fixes |
 
+## Releases
+
+Versions are managed with [Changesets](https://changesets.dev). See `.changeset/README.md`.
+
+1. Every pull request that changes the app adds a changeset (`bunx changeset`). CI fails without one.
+2. When changesets land on `main`, the release workflow opens or updates a **Version Packages** pull request that bumps the version and updates `apps/desktop/CHANGELOG.md`.
+3. Merging that pull request tags `@github-client/desktop@<version>`, creates the GitHub release, and attaches installers built on GitHub Actions:
+   - Linux: `.deb`, `.rpm`, `.AppImage`
+   - Windows: `.msi` and `-setup.exe`
+   - macOS: universal `.dmg` (Apple Silicon and Intel)
+
+The workflow needs **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests** turned on.
+
+### Installing unsigned builds
+
+The builds are not code signed yet:
+
+- **macOS:** the app has an ad-hoc signature only, so Gatekeeper blocks the first launch. After copying the app to Applications, run:
+
+  ```sh
+  xattr -dr com.apple.quarantine /Applications/GitHub-client.app
+  ```
+
+- **Windows:** SmartScreen warns about an unknown publisher. Choose **More info → Run anyway**.
+
+### Enabling macOS signing later
+
+Once an Apple Developer account is available:
+
+1. Add the repository secrets `APPLE_CERTIFICATE` (base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific password), and `APPLE_TEAM_ID`.
+2. Pass them as `env` to the `tauri-apps/tauri-action` step in `.github/workflows/release.yml`. The Tauri CLI signs and notarizes the app when they are set.
+3. Remove `bundle.macOS.signingIdentity: "-"` from `apps/desktop/src-tauri/tauri.conf.json`.
+
 ## Layout
 
 ```

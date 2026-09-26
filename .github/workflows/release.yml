@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  changesets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # `changeset publish` checks existing tags to find unreleased versions.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      # With changesets on main: opens or updates the "Version Packages" PR.
+      # After that PR merges: tags the new version and creates its GitHub release.
+      - id: changesets
+        uses: changesets/action@v2
+        with:
+          version-script: bunx changeset version
+          publish-script: bunx changeset publish
+      - id: tag
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.published-packages }}
+        run: |
+          tag=$(jq -r '.[] | select(.name == "@github-client/desktop") | "\(.name)@\(.version)"' <<< "$PUBLISHED")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # Tags pushed with GITHUB_TOKEN do not start other workflows, so the build runs here.
+  build:
+    needs: changesets
+    if: needs.changesets.outputs.tag != ''
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Tauri system libraries
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev patchelf
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: bun install --frozen-lockfile
+      # Builds are not code signed yet: no Apple Developer or Windows signing certificate.
+      # macOS gets an ad-hoc signature (tauri.conf.json), which Apple Silicon requires.
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: bun run tauri
+          args: ${{ matrix.args }}
+          tagName: ${{ needs.changesets.outputs.tag }}
+          releaseName: GitHub-client ${{ needs.changesets.outputs.tag }}
+          releaseDraft: false
