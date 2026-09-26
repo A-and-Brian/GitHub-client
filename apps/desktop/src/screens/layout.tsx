@@ -7,6 +7,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@github-client/ui/components/dropdown-menu"
@@ -33,6 +35,7 @@ import { useShortcuts } from "@/app/shortcuts"
 import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
+import { useTheme } from "@/components/theme-provider"
 import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
@@ -40,6 +43,7 @@ const GROUP_ICONS = { me: UserIcon, org: BuildingIcon, team: UsersIcon, starred:
 
 export function Layout() {
   const { client, viewer } = useSession()
+  const { theme, setTheme } = useTheme()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const groups = useLiveQuery((q) =>
     q.from({ g: client.collections.groups.collection }).orderBy(({ g }) => g.order, "asc"),
@@ -140,6 +144,18 @@ export function Layout() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(value) => setTheme(value as typeof theme)}
+                >
+                  <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={async () => {
                   try {
