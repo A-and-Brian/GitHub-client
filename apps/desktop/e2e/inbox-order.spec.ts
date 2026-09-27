@@ -9,7 +9,7 @@ const pinned = (page: Page) => page.getByRole("list", { name: "Pinned pull reque
 async function setup(page: Page) {
   const requests = await fakeGitHub(page, { pullCount: 4 })
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
-  await page.goto("/")
+  await page.goto("/#/inbox")
   await expect(row(page)).toBeVisible()
   return requests
 }
@@ -136,7 +136,7 @@ for (const reason of ["pointercancel", "blur", "resize", "pagehide", "lost-butto
 test("Failures keeps state actions available but disables manual ordering", async ({ page }) => {
   await fakeGitHub(page, { checkState: "FAILURE", pullCount: 2 })
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
-  await page.goto("/")
+  await page.goto("/#/inbox")
   await expect(row(page)).toBeVisible()
   await page.getByRole("button", { name: "Failures", exact: true }).click()
   await row(page)
@@ -286,7 +286,7 @@ test("incoming GitHub activity changes freshness without reshuffling arranged wo
   const options = { pullCount: 4, pullUpdatedAt: {} as Record<string, string> }
   await fakeGitHub(page, options)
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
-  await page.goto("/")
+  await page.goto("/#/inbox")
   await expect(active(page).locator("[data-pull-id]")).toHaveCount(4)
   await menuAction(page, "Move down")
   const order = await active(page)

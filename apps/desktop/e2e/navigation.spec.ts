@@ -3,7 +3,7 @@ import { fakeGitHub } from "./fake-github"
 
 async function signIn(page: Page) {
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
-  await page.goto("/")
+  await page.goto("/#/inbox")
   await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
 }
 
