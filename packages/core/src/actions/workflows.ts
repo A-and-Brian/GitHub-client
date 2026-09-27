@@ -10,6 +10,9 @@ export const rerunFailedJobs = (rest: RestClient, repo: string, runId: number) =
 export const cancelRun = (rest: RestClient, repo: string, runId: number) =>
   rest.request("POST", `/repos/${repo}/actions/runs/${runId}/cancel`)
 
+export const approveRun = (rest: RestClient, repo: string, runId: number) =>
+  rest.request("POST", `/repos/${repo}/actions/runs/${runId}/approve`)
+
 export const rerunJob = (rest: RestClient, repo: string, jobId: number) =>
   rest.request("POST", `/repos/${repo}/actions/jobs/${jobId}/rerun`)
 

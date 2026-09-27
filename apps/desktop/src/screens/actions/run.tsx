@@ -76,6 +76,9 @@ export function RunPage() {
   })
 
   const completed = run?.status === "completed"
+  const approvalCandidate =
+    run?.conclusion === "action_required" &&
+    (run.event === "pull_request" || run.event === "pull_request_target")
 
   return (
     <div className="flex h-full flex-col">
@@ -105,7 +108,18 @@ export function RunPage() {
             {run && <RunFacts run={run} />}
           </p>
         </div>
-        {run && completed && (
+        {run && approvalCandidate && (
+          <ConfirmButton
+            title="Approve workflow"
+            description={`Approving "${run.name}" on ${run.headBranch ?? "this branch"} allows its PR code to execute.`}
+            confirmLabel="Approve workflow"
+            success="Approval requested"
+            action={() => client.approveRun(repo, runId)}
+          >
+            Approve workflow
+          </ConfirmButton>
+        )}
+        {run && completed && !approvalCandidate && (
           <ConfirmButton
             title="Re-run all jobs"
             description={`Starts attempt ${run.runAttempt + 1} of "${run.name}" with every job.`}
@@ -116,7 +130,7 @@ export function RunPage() {
             Re-run all jobs
           </ConfirmButton>
         )}
-        {run && completed && failed.length > 0 && (
+        {run && completed && !approvalCandidate && failed.length > 0 && (
           <ConfirmButton
             title="Re-run failed jobs"
             description={`Re-runs ${failed.length} failed job${failed.length === 1 ? "" : "s"} and the jobs that depend on them.`}
@@ -171,7 +185,9 @@ export function RunPage() {
               {jobsStatus?.error
                 ? "Could not load jobs. Use Refresh to try again."
                 : jobsStatus?.lastSuccess
-                  ? "This run has no jobs."
+                  ? approvalCandidate
+                    ? "This run has no jobs yet. Approve the workflow to allow its PR code to execute."
+                    : "This run has no jobs."
                   : "Loading jobs…"}
             </p>
           )}

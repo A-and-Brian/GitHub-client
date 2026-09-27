@@ -349,3 +349,67 @@ test("failed durable inbox writes roll back the visible preference and can retry
     db.close()
   }
 })
+
+function approvalClient() {
+  const requests: Array<{ method: string; path: string }> = []
+  let rejectApproval = false
+  const base = platform(null, null)
+  const client = new GitHubClient({
+    ...base,
+    fetch: async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const method = init?.method ?? "GET"
+      requests.push({ method, path })
+      if (method === "POST") {
+        return rejectApproval
+          ? new Response(JSON.stringify({ message: "Approval forbidden" }), { status: 403 })
+          : new Response(null, { status: 201 })
+      }
+      return new Response(
+        JSON.stringify(path.endsWith("/jobs") ? { jobs: [] } : { workflow_runs: [] }),
+      )
+    },
+  })
+  return {
+    client,
+    requests,
+    reject() {
+      rejectApproval = true
+    },
+  }
+}
+
+test("approval refreshes repository runs and run jobs after success", async () => {
+  const { client, requests } = approvalClient()
+  const stopRuns = client.watchRuns("acme/api")
+  const stopJobs = client.watchRunJobs("acme/api", 42)
+  await Promise.all([client.refresh("runs:acme/api"), client.refresh("run-jobs:42")])
+  requests.length = 0
+
+  await client.approveRun("acme/api", 42)
+
+  expect(requests).toEqual(
+    expect.arrayContaining([
+      { method: "POST", path: "/repos/acme/api/actions/runs/42/approve" },
+      { method: "GET", path: "/repos/acme/api/actions/runs" },
+      { method: "GET", path: "/repos/acme/api/actions/runs/42/jobs" },
+    ]),
+  )
+  stopRuns()
+  stopJobs()
+})
+
+test("approval failure does not refresh runs or jobs", async () => {
+  const { client, requests, reject } = approvalClient()
+  const stopRuns = client.watchRuns("acme/api")
+  const stopJobs = client.watchRunJobs("acme/api", 42)
+  await Promise.all([client.refresh("runs:acme/api"), client.refresh("run-jobs:42")])
+  requests.length = 0
+  reject()
+
+  await expect(client.approveRun("acme/api", 42)).rejects.toThrow("Approval forbidden")
+
+  expect(requests).toEqual([{ method: "POST", path: "/repos/acme/api/actions/runs/42/approve" }])
+  stopRuns()
+  stopJobs()
+})
