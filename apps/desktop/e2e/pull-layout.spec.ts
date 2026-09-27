@@ -116,6 +116,13 @@ test("checks stay beside a long conversation and drafts survive resizing", async
   await expect(sidebar).toBeVisible()
   await comment.fill("keep this draft")
 
+  // Details render before the files request completes. Its completion removes
+  // the freshness notice and shifts the whole pane, independently of scrolling.
+  await expect(page.getByText(/Awaiting refresh/)).toHaveCount(0)
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }).locator(".animate-spin"),
+  ).toHaveCount(0)
+
   const scroll = page.locator(".pull-conversation-scroll")
   await scroll.evaluate((node) => node.scrollTo({ top: 0, behavior: "instant" }))
   const before = await sidebar.boundingBox()
