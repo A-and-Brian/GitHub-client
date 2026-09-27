@@ -44,6 +44,7 @@ export function InboxRow({
   dragDisabled,
   busy,
   onSelect,
+  onPrefetch,
   onPin,
   onUnpin,
   onSnooze,
@@ -58,6 +59,7 @@ export function InboxRow({
   dragDisabled: boolean
   busy: boolean
   onSelect: (pull: PullRequest) => void
+  onPrefetch: InboxRowAction
   onPin: InboxRowAction
   onUnpin: InboxRowAction
   onSnooze: (pull: PullRequest, until: string) => void
@@ -102,6 +104,7 @@ export function InboxRow({
       data-pull-id={pull.id}
       data-inbox-section={pinned && entry.state === "active" ? "pinned" : entry.state}
       data-selected={selected || undefined}
+      onPointerEnter={() => onPrefetch(pull)}
       className={cn(
         "inbox-sortable-row group/row relative border-b border-border/70 outline-none motion-safe:transition-transform motion-safe:duration-150 motion-safe:ease-out motion-reduce:transition-none",
         compact ? "min-h-9 px-2 py-1" : "min-h-20 px-2 py-2",

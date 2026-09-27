@@ -221,6 +221,7 @@ export function Inbox() {
       dragDisabled={dragDisabled}
       busy={busyIds.has(entry.pull.id)}
       onSelect={select}
+      onPrefetch={(pull) => void client.prefetchPull(pull.repo, pull.number)}
       onPin={(pull) =>
         runRowMutation(pull, "Pinned", () => client.pinInboxPull(viewer.login, pull))
       }
