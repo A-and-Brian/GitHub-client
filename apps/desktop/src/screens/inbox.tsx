@@ -189,6 +189,9 @@ export function Inbox() {
                     selectedId === entry.pull.id && "bg-accent",
                   )}
                   aria-current={selectedId === entry.pull.id ? "true" : undefined}
+                  onPointerEnter={() =>
+                    void client.prefetchPull(entry.pull.repo, entry.pull.number)
+                  }
                   onClick={() => select(entry.pull)}
                 >
                   <span className="text-xs font-semibold break-all">

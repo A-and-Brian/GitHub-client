@@ -65,3 +65,70 @@ test("sign-out forgets the token and deletes cached data and drafts", async () =
   expect(client.collections.inboxPreferences.collection.size).toBe(0)
   expect(client.collections.drafts.size).toBe(0)
 })
+
+test("pull hover prefetch joins the page sync and skips a completed cache", async () => {
+  const github = fakeGitHub([
+    {
+      method: "POST",
+      path: "/graphql",
+      body: {
+        data: {
+          repository: {
+            mergeCommitAllowed: true,
+            squashMergeAllowed: true,
+            rebaseMergeAllowed: false,
+            pullRequest: {
+              id: "PR_1",
+              number: 7,
+              title: "Prefetched",
+              url: "https://github.com/acme/api/pull/7",
+              state: "OPEN",
+              isDraft: false,
+              bodyHTML: "",
+              createdAt: "2026-09-25T00:00:00Z",
+              headRefName: "feature",
+              headRefOid: "abc123",
+              baseRefName: "main",
+              baseRefOid: "def456",
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              reviewDecision: null,
+              viewerCanUpdate: true,
+              additions: 1,
+              deletions: 0,
+              changedFiles: 0,
+              author: null,
+              timelineItems: { nodes: [] },
+              reviewThreads: { nodes: [] },
+              commits: { nodes: [] },
+            },
+          },
+        },
+      },
+    },
+    { path: "/repos/acme/api/pulls/7/files?per_page=100", body: [] },
+  ])
+  const client = new GitHubClient({
+    ...platform("stored", null),
+    fetch: github.fetch,
+  })
+  await client.auth.restore()
+
+  await client.prefetchPull("acme/api", 7)
+  expect(client.poller.status("pull:acme/api#7")).toBeUndefined()
+  await Promise.all([
+    client.collections.pullDetails.remove(["acme/api#7"]),
+    client.collections.pullFiles.remove(["acme/api#7"]),
+  ])
+
+  const prefetch = client.prefetchPull("acme/api", 7)
+  const releasePageWatch = client.watchPull("acme/api", 7)
+  await prefetch
+  await client.prefetchPull("acme/api", 7)
+
+  expect(github.graphqlCalls()).toHaveLength(2)
+  expect(client.collections.pullDetails.collection.get("acme/api#7")?.title).toBe("Prefetched")
+  expect(client.collections.pullFiles.collection.get("acme/api#7")?.headOid).toBe("abc123")
+  releasePageWatch()
+  expect(client.poller.status("pull:acme/api#7")).toBeUndefined()
+})

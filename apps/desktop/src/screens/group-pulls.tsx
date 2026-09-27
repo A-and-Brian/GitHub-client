@@ -153,6 +153,7 @@ export function GroupPulls() {
               index={index}
               selected={index === selected}
               onSelect={() => setSelected(index)}
+              onPointerEnter={() => void client.prefetchPull(pull.repo, pull.number)}
               onOpen={() => open(pull)}
             />
           </Fragment>
@@ -185,12 +186,14 @@ function PullRow({
   index,
   selected,
   onSelect,
+  onPointerEnter,
   onOpen,
 }: {
   pull: PullRequest
   index: number
   selected: boolean
   onSelect: () => void
+  onPointerEnter: () => void
   onOpen: () => void
 }) {
   const ci = rollupState(pull.checkState)
@@ -203,6 +206,7 @@ function PullRow({
         selected ? "bg-accent" : "hover:bg-accent/50",
       )}
       onMouseMove={onSelect}
+      onPointerEnter={onPointerEnter}
       onClick={onOpen}
     >
       <span className="w-4">{ci && <StateIcon state={ci} />}</span>

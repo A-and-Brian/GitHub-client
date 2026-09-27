@@ -179,6 +179,21 @@ export class GitHubClient {
     })
   }
 
+  /** Loads a pull request before navigation, using the same cache and sync job as its page. */
+  async prefetchPull(repo: string, number: number): Promise<void> {
+    const key = prKey(repo, number)
+    const detail = this.collections.pullDetails.collection.get(key)
+    const files = this.collections.pullFiles.collection.get(key)
+    if (detail && files?.headOid === detail.headOid) return
+
+    const release = this.watchPull(repo, number)
+    try {
+      await this.refresh(jobKeys.pull(repo, number))
+    } finally {
+      release()
+    }
+  }
+
   watchRuns(repo: string): () => void {
     return this.poller.watch({
       key: jobKeys.runs(repo),
