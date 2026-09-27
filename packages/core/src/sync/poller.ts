@@ -86,10 +86,12 @@ export class Poller {
     }
   }
 
-  /** Runs a job now (or joins the run in flight) and resolves when it finishes. */
-  refresh(key: string): Promise<void> {
+  /** Runs a job now, after any current run, and resolves when it finishes. */
+  async refresh(key: string): Promise<void> {
     const entry = this.entries.get(key)
-    return entry ? this.run(entry) : Promise.resolve()
+    if (!entry) return
+    if (entry.inFlight) await entry.inFlight
+    await this.run(entry)
   }
 
   status(key: string): JobStatus | undefined {
