@@ -140,6 +140,9 @@ export function InboxRow({
               aria-hidden="true"
               className="size-3.5 shrink-0 text-muted-foreground"
             />
+            <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
+              #{pull.number}
+            </span>
             <span
               className="min-w-0 flex-1 truncate text-xs font-medium"
               title={`${pull.repo} #${pull.number}: ${pull.title}`}
@@ -156,7 +159,9 @@ export function InboxRow({
               <span className="min-w-0 flex-1 truncate font-semibold" title={pull.repo}>
                 {pull.repo}
               </span>
-              <span className="shrink-0 text-muted-foreground">#{pull.number}</span>
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-semibold tabular-nums text-foreground">
+                #{pull.number}
+              </span>
               <InboxCheck id={checkId} pull={pull} now={now} online={online} />
               <span className="shrink-0 text-[10px] text-muted-foreground">
                 <RelativeTime iso={pull.updatedAt} />

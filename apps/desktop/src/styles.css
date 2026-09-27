@@ -173,7 +173,7 @@
 @container pull-pane (min-width: 1152px) {
   .pull-conversation-layout {
     display: grid;
-    grid-template-columns: minmax(0, 768px) 320px;
+    grid-template-columns: minmax(0, 1fr) fit-content(320px);
     gap: 24px;
     width: 100%;
     max-width: none;

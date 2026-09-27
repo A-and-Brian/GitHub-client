@@ -13,6 +13,15 @@ async function openPull(page: Page) {
   return page.getByRole("button", { name: "Squash and merge" })
 }
 
+// Pull details can render before sync completes; wait for the freshness notice
+// to disappear before measuring geometry.
+async function waitForInitialSync(page: Page) {
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }).locator(".animate-spin"),
+  ).toHaveCount(0)
+  await expect(page.getByText(/Awaiting refresh/)).toHaveCount(0)
+}
+
 test("merge confirmation can be canceled without sending a request", async ({ page }) => {
   const requests = await fakeGitHub(page)
   const merge = await openPull(page)
@@ -51,6 +60,8 @@ test("confirmation submits the selected method and head SHA once while pending",
   await page.getByRole("combobox").click()
   await page.getByRole("option", { name: "Create a merge commit" }).click()
   const merge = page.getByRole("button", { name: "Create a merge commit" })
+  await expect(merge).toBeVisible()
+  await waitForInitialSync(page)
   await merge.click()
   const confirm = page.getByRole("button", { name: "Confirm merge" })
   const before = await confirm.boundingBox()
@@ -149,8 +160,9 @@ for (const viewport of [1280, 760]) {
     await fakeGitHub(page)
     const merge = await openPull(page)
     await expect(merge).toBeVisible()
-    // Cached details can render before the initial sync removes this header banner.
-    await expect(page.getByText(/Awaiting refresh/)).toBeHidden()
+
+    await waitForInitialSync(page)
+
     const before = await merge.boundingBox()
     expect(before).not.toBeNull()
 

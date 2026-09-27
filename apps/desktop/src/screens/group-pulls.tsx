@@ -221,6 +221,9 @@ function PullRow({
       <span className="w-4">{ci && <StateIcon state={ci} />}</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
+          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-semibold tabular-nums text-foreground">
+            #{pull.number}
+          </span>
           <span className={cn("truncate font-medium", pull.isDraft && "text-muted-foreground")}>
             {pull.isDraft && "Draft: "}
             {pull.title}
@@ -230,9 +233,7 @@ function PullRow({
           ))}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>
-            {pull.repo}#{pull.number}
-          </span>
+          <span>{pull.repo}</span>
           <span className="truncate">{pull.headRef}</span>
         </div>
       </div>

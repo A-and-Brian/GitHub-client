@@ -54,6 +54,12 @@ export function CommandPalette({
           <CommandEmpty>No results.</CommandEmpty>
           <CommandGroup heading="Inbox">
             <CommandItem
+              value="home dashboard organizations teams"
+              onSelect={() => run(() => navigate({ to: "/" }))}
+            >
+              Home
+            </CommandItem>
+            <CommandItem
               value="inbox active snoozed settled pull requests"
               onSelect={() => run(() => navigate({ to: "/inbox" }))}
             >
@@ -66,7 +72,21 @@ export function CommandPalette({
                 key={g.id}
                 value={`group ${g.name}`}
                 onSelect={() =>
-                  run(() => navigate({ to: "/g/$groupId", params: { groupId: g.id } }))
+                  run(() => {
+                    if (g.kind === "org")
+                      return navigate({
+                        to: "/org/$org",
+                        params: { org: g.org ?? g.name },
+                        search: { tab: "overview" },
+                      })
+                    if (g.kind === "team" && g.org)
+                      return navigate({
+                        to: "/team/$org/$slug",
+                        params: { org: g.org, slug: g.id.slice(g.id.indexOf("/") + 1) },
+                        search: { tab: "overview" },
+                      })
+                    return navigate({ to: "/g/$groupId", params: { groupId: g.id } })
+                  })
                 }
               >
                 {g.name}
@@ -94,6 +114,28 @@ export function CommandPalette({
                   <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                     {p.repo}#{p.number}
                   </span>
+                </CommandItem>
+              )
+            })}
+          </CommandGroup>
+          <CommandGroup heading="Repositories">
+            {repoNames.map((fullName) => {
+              const [owner, repo] = fullName.split("/") as [string, string]
+              return (
+                <CommandItem
+                  key={fullName}
+                  value={`repository code ${fullName}`}
+                  onSelect={() =>
+                    run(() =>
+                      navigate({
+                        to: "/repo/$owner/$repo",
+                        params: { owner, repo },
+                        search: { tab: "code" },
+                      }),
+                    )
+                  }
+                >
+                  {fullName} · Code
                 </CommandItem>
               )
             })}

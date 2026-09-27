@@ -114,6 +114,9 @@ export function PullContent({
           )}
           <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] sm:basis-0">
             <h1 className="break-words text-lg font-semibold leading-snug">
+              <span className="mr-2 inline-block rounded bg-muted px-1.5 py-0.5 text-sm font-semibold tabular-nums text-foreground">
+                #{number}
+              </span>{" "}
               {detail?.title ?? "Loading pull request…"}
             </h1>
             {detail && (

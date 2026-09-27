@@ -21,6 +21,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   DownloadIcon,
+  HomeIcon,
   InboxIcon,
   MenuIcon,
   SearchIcon,
@@ -124,6 +125,16 @@ function GlobalGroupRail({
         </Button>
       </div>
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
+        <Link
+          to="/"
+          className={cn(
+            "mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
+            pathname === "/" && "bg-sidebar-accent font-medium",
+          )}
+        >
+          <HomeIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span>Home</span>
+        </Link>
         <Link
           to="/inbox"
           className={cn(
@@ -241,8 +252,25 @@ function GroupNavNode({
       : group.name
   const isCollapsed = collapsed.has(group.id)
   const hasChildren = children.length > 0
-  const href = `/g/${encodeURIComponent(group.id)}`
-  const active = pathname === href || decodeURIComponent(pathname) === `/g/${group.id}`
+  const destination =
+    group.kind === "org"
+      ? {
+          to: "/org/$org" as const,
+          params: { org: group.org ?? group.name },
+          search: { tab: "overview" as const },
+        }
+      : group.kind === "team" && group.org
+        ? {
+            to: "/team/$org/$slug" as const,
+            params: { org: group.org, slug: group.id.slice(group.id.indexOf("/") + 1) },
+            search: { tab: "overview" as const },
+          }
+        : { to: "/g/$groupId" as const, params: { groupId: group.id } }
+  const decodedPath = decodeURIComponent(pathname)
+  const active =
+    decodedPath === `/g/${group.id}` ||
+    (group.kind === "org" && decodedPath === `/org/${group.org ?? group.name}`) ||
+    (group.kind === "team" && decodedPath === `/team/${group.id.slice(5)}`)
   const rowClass = cn(
     "flex min-w-0 items-center gap-2 rounded-md py-1.5 text-sm hover:bg-sidebar-accent",
     active && "bg-sidebar-accent font-medium",
@@ -290,15 +318,14 @@ function GroupNavNode({
           </span>
         ) : (
           <Link
-            to="/g/$groupId"
-            params={{ groupId: group.id }}
+            {...destination}
             className="min-w-0 flex-1 truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-current={active ? "page" : undefined}
           >
             {label}
           </Link>
         )}
-        {!contextOnly && (
+        {!contextOnly && group.kind !== "org" && group.kind !== "team" && (
           <span className="text-xs tabular-nums text-muted-foreground">
             {counts.get(group.id) ?? ""}
           </span>

@@ -73,7 +73,10 @@ export function ConversationTab({ detail }: { detail: PullRequestDetail }) {
           )}
           <CommentBox detail={detail} />
         </div>
-        <aside className="pull-conversation-checks" aria-label="Pull request checks">
+        <aside
+          className="pull-conversation-checks w-fit min-w-0 max-w-full"
+          aria-label="Pull request checks"
+        >
           <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
           <ChecksContent detail={detail} />
         </aside>
