@@ -3,12 +3,11 @@ import { Button } from "@github-client/ui/components/button"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { Link, useNavigate } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
-import { runRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
 import { RepositoryContext } from "@/components/repository-context"
 import { runState, StateIcon } from "@/components/status"
@@ -17,13 +16,25 @@ import { openExternal } from "@/platform"
 import { ConfirmButton } from "./confirm-button"
 import { LogViewer } from "./log-viewer"
 
-export function RunPage() {
-  const { owner, repo: name, runId: runIdParam } = runRoute.useParams()
-  const { job: jobParam } = runRoute.useSearch()
-  const navigate = useNavigate()
+export function RunContent({
+  owner,
+  name,
+  runId,
+  job: jobParam,
+  onJobChange,
+  onBack,
+  embedded = false,
+}: {
+  owner: string
+  name: string
+  runId: number
+  job?: number
+  onJobChange: (id: number) => void
+  onBack: () => void
+  embedded?: boolean
+}) {
   const client = useClient()
   const repo = `${owner}/${name}`
-  const runId = Number(runIdParam)
 
   useWatch((c) => c.watchRunJobs(repo, runId), [repo, runId])
   useWatch((c) => c.watchRuns(repo), [repo])
@@ -50,30 +61,25 @@ export function RunPage() {
   const failed = jobs.filter((j) => runState(j.status, j.conclusion) === "failure")
   const job = jobs.find((j) => j.id === jobParam) ?? failed[0] ?? jobs[0]
 
-  const selectJob = (id: number) =>
-    navigate({
-      to: "/actions/$owner/$repo/runs/$runId",
-      params: { owner, repo: name, runId: runIdParam },
-      search: { job: id },
-      replace: true,
-    })
-
   const refresh = () =>
     Promise.all([client.refresh(jobKeys.runJobs(runId)), client.refresh(jobKeys.runs(repo))])
 
   const moveJob = (delta: number) => {
     const at = job ? jobs.indexOf(job) : -1
     const next = jobs[Math.min(Math.max(at + delta, 0), jobs.length - 1)]
-    if (next) void selectJob(next.id)
+    if (next) onJobChange(next.id)
   }
 
-  useShortcuts({
-    Escape: () => window.history.back(),
-    j: () => moveJob(1),
-    k: () => moveJob(-1),
-    o: () => run && void openExternal(job?.url ?? run.url),
-    r: () => void refresh(),
-  })
+  useShortcuts(
+    {
+      Escape: onBack,
+      j: () => moveJob(1),
+      k: () => moveJob(-1),
+      o: () => run && void openExternal(job?.url ?? run.url),
+      r: () => void refresh(),
+    },
+    !embedded,
+  )
 
   const completed = run?.status === "completed"
   const approvalCandidate =
@@ -81,15 +87,12 @@ export function RunPage() {
     (run.event === "pull_request" || run.event === "pull_request_target")
 
   return (
-    <div className="flex h-full flex-col">
-      <RepositoryContext owner={owner} repo={name} location={`Run ${runId}`} />
-      <header className="flex flex-wrap items-start gap-2 border-b px-4 py-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Back"
-          onClick={() => window.history.back()}
-        >
+    <div className="flex h-full min-h-0 flex-col">
+      {!embedded && <RepositoryContext owner={owner} repo={name} location={`Run ${runId}`} />}
+      <header
+        className={cn("flex flex-wrap items-start gap-2 border-b px-4 py-3", embedded && "pr-12")}
+      >
+        <Button variant="ghost" size="icon-sm" aria-label="Back" onClick={onBack}>
           <ArrowLeftIcon />
         </Button>
         {run && <StateIcon state={runState(run.status, run.conclusion)} className="mt-1.5" />}
@@ -167,8 +170,8 @@ export function RunPage() {
           </Button>
         )}
       </header>
-      <div className="flex min-h-0 flex-1">
-        <aside className="w-72 shrink-0 overflow-y-auto border-r">
+      <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+        <aside className="max-h-[30%] w-full shrink-0 overflow-y-auto border-b sm:max-h-none sm:w-72 sm:border-r sm:border-b-0">
           <ul>
             {jobs.map((j) => (
               <JobRow
@@ -176,7 +179,7 @@ export function RunPage() {
                 job={j}
                 selected={j.id === job?.id}
                 canRerun={completed && j.status === "completed"}
-                onSelect={() => void selectJob(j.id)}
+                onSelect={() => onJobChange(j.id)}
               />
             ))}
           </ul>

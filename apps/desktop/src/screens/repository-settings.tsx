@@ -12,14 +12,29 @@ import {
 } from "@github-client/core/actions/repository-settings"
 import { Button } from "@github-client/ui/components/button"
 import { Checkbox } from "@github-client/ui/components/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@github-client/ui/components/dialog"
 import { Input } from "@github-client/ui/components/input"
 import { Label } from "@github-client/ui/components/label"
+import { useBlocker } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
 import { useSession } from "@/app/client"
 import { showError, useErrorToast } from "@/app/errors"
 import { RepositoryContext } from "@/components/repository-context"
 
-export function RepositorySettings({ owner, repo }: { owner: string; repo: string }) {
+export function RepositorySettings({
+  owner,
+  repo,
+  embedded = false,
+}: {
+  owner: string
+  repo: string
+  embedded?: boolean
+}) {
   const { client } = useSession()
   const [settings, setSettings] = useState<RepositorySettingsData | null>(null)
   const [draft, setDraft] = useState<RepositorySettingsDraft | null>(null)
@@ -113,6 +128,7 @@ export function RepositorySettings({ owner, repo }: { owner: string; repo: strin
       setSettings(saved)
       setDraft(toDraft(saved))
       setNotice("GitHub confirmed the updated settings.")
+      return true
     } catch (cause) {
       if (requestVersion.current !== version) return
       if (cause instanceof RepositorySettingsConflictError) {
@@ -177,9 +193,55 @@ export function RepositorySettings({ owner, repo }: { owner: string; repo: strin
   const changed =
     settings && draft && Object.keys(changedRepositorySettings(settings, draft)).length > 0
 
+  const blocker = useBlocker({
+    shouldBlockFn: () => Boolean(changed || uncertainFields || saving),
+    enableBeforeUnload: Boolean(changed || uncertainFields || saving),
+    withResolver: true,
+  })
+
   return (
     <div className="h-full overflow-y-auto">
-      <RepositoryContext owner={owner} repo={repo} location="Settings" />
+      <Dialog
+        open={blocker.status === "blocked"}
+        onOpenChange={(open) => {
+          if (!open) blocker.reset?.()
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Unsaved repository settings</DialogTitle>
+          <DialogDescription>
+            {uncertainFields
+              ? "GitHub accepted a save but its result is still unconfirmed. Stay to retry confirmation."
+              : "Save your changes before leaving, discard them, or stay here."}
+          </DialogDescription>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={() => blocker.reset?.()}>
+              Stay
+            </Button>
+            <Button
+              variant="outline"
+              disabled={saving || Boolean(uncertainFields)}
+              onClick={() => {
+                cancel()
+                blocker.proceed?.()
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              disabled={
+                saving || !settings?.canAdmin || Boolean(mergeError) || Boolean(uncertainFields)
+              }
+              onClick={async () => {
+                if (await save()) blocker.proceed?.()
+              }}
+            >
+              Save and leave
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {!embedded && <RepositoryContext owner={owner} repo={repo} location="Settings" />}
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
         <header>
           <p className="text-xs text-muted-foreground">Repository settings</p>

@@ -12,18 +12,18 @@ import { Tabs, TabsList, TabsTrigger } from "@github-client/ui/components/tabs"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { useNavigate } from "@tanstack/react-router"
 import { ExternalLinkIcon, PlayIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
-import { runsRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
 import { RepositoryContext } from "@/components/repository-context"
 import { type RunState, runState, StateIcon } from "@/components/status"
 import { duration, RelativeTime } from "@/components/time"
 import { openExternal } from "@/platform"
+import { useInboxLocation } from "../inbox-location"
 import { DispatchDialog } from "./dispatch-dialog"
+import { RunDialog } from "./run-dialog"
 
 type StatusFilter = "all" | "active" | "failed" | "succeeded"
 
@@ -36,11 +36,20 @@ const STATUS_MATCH: Record<StatusFilter, (state: RunState) => boolean> = {
 
 const ALL_WORKFLOWS = "all"
 
-export function RunsPage() {
-  const { owner, repo: name } = runsRoute.useParams()
+export function RunsContent({
+  owner,
+  name,
+  embedded = false,
+  active = true,
+}: {
+  owner: string
+  name: string
+  embedded?: boolean
+  active?: boolean
+}) {
   const repo = `${owner}/${name}`
   const client = useClient()
-  const navigate = useNavigate()
+  const location = useInboxLocation()
   const [workflow, setWorkflow] = useState<string>(ALL_WORKFLOWS)
   const [status, setStatus] = useState<StatusFilter>("all")
   const [text, setText] = useState("")
@@ -48,8 +57,8 @@ export function RunsPage() {
   const [dispatching, setDispatching] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  useWatch((c) => c.watchRuns(repo), [repo])
-  useWatch((c) => c.watchWorkflows(repo), [repo])
+  useWatch((c) => (active ? c.watchRuns(repo) : () => {}), [repo, active])
+  useWatch((c) => (active ? c.watchWorkflows(repo) : () => {}), [repo, active])
   const sync = useJobStatus(jobKeys.runs(repo))
   const workflowsSync = useJobStatus(jobKeys.workflows(repo))
   useErrorToast(sync?.error, {
@@ -97,11 +106,7 @@ export function RunsPage() {
 
   const open = (run: WorkflowRun | undefined) => {
     if (!run) return
-    void navigate({
-      to: "/actions/$owner/$repo/runs/$runId",
-      params: { owner, repo: name, runId: String(run.id) },
-      search: {},
-    })
+    location.update({ run: run.id, job: undefined })
   }
   const refresh = () =>
     Promise.all([client.refresh(jobKeys.runs(repo)), client.refresh(jobKeys.workflows(repo))])
@@ -117,7 +122,7 @@ export function RunsPage() {
       "/": () => searchRef.current?.focus(),
       r: () => void refresh(),
     },
-    !dispatching,
+    active && !dispatching && !location.run,
   )
 
   const workflowName = (id: string) =>
@@ -125,7 +130,18 @@ export function RunsPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <RepositoryContext owner={owner} repo={name} location="Actions" />
+      {!embedded && <RepositoryContext owner={owner} repo={name} location="Actions" />}
+      {active && location.run && (
+        <RunDialog
+          open
+          owner={owner}
+          name={name}
+          runId={location.run}
+          job={location.job}
+          onJobChange={(job) => location.update({ job }, true)}
+          onBack={() => location.update({ run: undefined, job: undefined })}
+        />
+      )}
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
         <h1 className="truncate font-semibold">Workflow runs</h1>
         <Tabs value={status} onValueChange={(v) => setStatus(v as StatusFilter)}>

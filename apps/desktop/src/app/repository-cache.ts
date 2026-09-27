@@ -24,10 +24,19 @@ type ResourceData = {
   readme: Awaited<ReturnType<typeof getReadme>>
 }
 type PullSummary = {
+  node_id?: string
   number: number
   title: string
   draft: boolean
   user?: { login?: string }
+  html_url?: string
+  created_at?: string
+  updated_at?: string
+  head?: { ref?: string; sha?: string }
+  base?: { ref?: string }
+  requested_reviewers?: { login: string }[]
+  requested_teams?: { slug: string }[]
+  labels?: { name: string; color: string }[]
 }
 type PageItem = { catalog: RepositorySummary; branches: { name: string }; pulls: PullSummary }
 const EMPTY = { loaded: false, refreshing: false, persisted: false, data: undefined } as const
@@ -35,7 +44,7 @@ const EMPTY = { loaded: false, refreshing: false, persisted: false, data: undefi
 function useHandle<T>(handle: RepositoryResourceHandle<T>, enabled: boolean) {
   const snapshot = useSyncExternalStore(
     enabled ? handle.subscribe : () => () => undefined,
-    enabled ? handle.snapshot : () => undefined,
+    handle.snapshot,
   )
   useEffect(() => {
     if (!enabled) return

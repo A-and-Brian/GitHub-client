@@ -34,13 +34,14 @@ test("sign in, see groups and pull requests, open a pull request", async ({ page
   await page.getByRole("link", { name: "Involving me", exact: true }).click()
   await expect(page.getByText("Speed up the diff view")).toBeVisible()
 
-  await page.getByRole("tab", { name: "Review requested" }).click()
+  await page.getByLabel("Inbox scope").selectOption("involving")
   await expect(page.getByText("Speed up the diff view")).toBeVisible()
-  await page.getByRole("tab", { name: "Mine" }).click()
-  await expect(page.getByText("No open pull requests.")).toBeVisible()
-  await page.getByRole("tab", { name: "All open" }).click()
-
-  await page.keyboard.press("Enter")
+  await page.getByLabel("Filter inbox").fill("no matching pull")
+  await expect(page.getByText("No active pull requests.")).toBeVisible()
+  await page.getByLabel("Filter inbox").fill("")
+  await page
+    .getByRole("button", { name: "acme/api #7: Speed up the diff view", exact: true })
+    .click()
   await expect(page.getByText("Virtualizes the diff rows.")).toBeVisible()
   await expect(page.getByText("Looks promising.")).toBeVisible()
 

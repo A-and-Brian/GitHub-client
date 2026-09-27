@@ -3,17 +3,15 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Navigate,
 } from "@tanstack/react-router"
 import { useSession } from "@/app/client"
-import { RunPage } from "@/screens/actions/run"
-import { RunsPage } from "@/screens/actions/runs"
 import { GroupDashboard, HomeDashboard } from "@/screens/dashboard"
-import { GroupPulls } from "@/screens/group-pulls"
 import { Inbox } from "@/screens/inbox"
+import { inboxSearch } from "@/screens/inbox-location"
 import { Layout } from "@/screens/layout"
-import { PullPage, type PullTab } from "@/screens/pull/pull-page"
+import type { PullTab } from "@/screens/pull/pull-page"
 import { RepositoryBrowser } from "@/screens/repository"
-import { RepositorySettings } from "@/screens/repository-settings"
 
 const rootRoute = createRootRoute({ component: Layout })
 
@@ -25,8 +23,9 @@ const indexRoute = createRoute({
 
 const dashboardSearch = (
   search: Record<string, unknown>,
-): { tab: "overview" | "repositories" } => ({
-  tab: search.tab === "repositories" ? "repositories" : "overview",
+): ReturnType<typeof inboxSearch> & { tab: "overview" | "repositories" | "pulls" } => ({
+  ...inboxSearch(search),
+  tab: search.tab === "repositories" || search.tab === "pulls" ? search.tab : "overview",
 })
 
 export const orgRoute = createRoute({
@@ -60,10 +59,18 @@ export const repositoryRoute = createRoute({
   path: "/repo/$owner/$repo",
   validateSearch: (
     search: Record<string, unknown>,
-  ): { ref?: string; path?: string; tab: "code" | "pulls" } => ({
+  ): ReturnType<typeof inboxSearch> & {
+    ref?: string
+    path?: string
+    tab: "code" | "pulls" | "actions" | "settings"
+  } => ({
+    ...inboxSearch(search),
     ref: typeof search.ref === "string" ? search.ref : undefined,
     path: typeof search.path === "string" ? search.path : undefined,
-    tab: search.tab === "pulls" ? "pulls" : "code",
+    tab:
+      search.tab === "pulls" || search.tab === "actions" || search.tab === "settings"
+        ? search.tab
+        : "code",
   }),
   component: function RepositoryRoute() {
     const { owner, repo } = repositoryRoute.useParams()
@@ -85,20 +92,56 @@ export const repositoryRoute = createRoute({
 export const groupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/g/$groupId",
-  component: GroupPulls,
+  validateSearch: inboxSearch,
+  component: function LegacyGroupRoute() {
+    const { groupId } = groupRoute.useParams()
+    if (groupId.startsWith("org:"))
+      return (
+        <Navigate
+          to="/org/$org"
+          params={{ org: groupId.slice(4) }}
+          search={{ tab: "pulls" }}
+          replace
+        />
+      )
+    if (groupId.startsWith("team:")) {
+      const [org, slug] = groupId.slice(5).split("/")
+      if (org && slug)
+        return (
+          <Navigate
+            to="/team/$org/$slug"
+            params={{ org, slug }}
+            search={{ tab: "pulls" }}
+            replace
+          />
+        )
+    }
+    return <Inbox key={groupId} entityScope={groupId === "me" ? undefined : { groupId }} />
+  },
 })
 
 export const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/inbox",
-  component: Inbox,
+  validateSearch: inboxSearch,
+  component: function InboxRoute() {
+    const { viewer } = useSession()
+    return <Inbox key={viewer.login} />
+  },
 })
 export const repoSettingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings/$owner/$repo",
   component: function SettingsRoute() {
     const { owner, repo } = repoSettingsRoute.useParams()
-    return <RepositorySettings key={`${owner}/${repo}`} owner={owner} repo={repo} />
+    return (
+      <Navigate
+        to="/repo/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ tab: "settings" }}
+        replace
+      />
+    )
   },
 })
 
@@ -107,16 +150,40 @@ const PULL_TABS: PullTab[] = ["conversation", "files", "checks"]
 export const pullRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/pr/$owner/$repo/$number",
-  validateSearch: (search: Record<string, unknown>): { tab: PullTab } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): ReturnType<typeof inboxSearch> & { tab: PullTab } => ({
+    ...inboxSearch(search),
     tab: PULL_TABS.includes(search.tab as PullTab) ? (search.tab as PullTab) : "conversation",
   }),
-  component: PullPage,
+  component: function LegacyPullRoute() {
+    const { owner, repo, number } = pullRoute.useParams()
+    const { tab, run, job } = pullRoute.useSearch()
+    return (
+      <Navigate
+        to="/repo/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ tab: "pulls", pull: `${owner}/${repo}#${number}`, pullTab: tab, run, job }}
+        replace
+      />
+    )
+  },
 })
 
 export const runsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/actions/$owner/$repo",
-  component: RunsPage,
+  component: function LegacyRunsRoute() {
+    const { owner, repo } = runsRoute.useParams()
+    return (
+      <Navigate
+        to="/repo/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ tab: "actions" }}
+        replace
+      />
+    )
+  },
 })
 
 export const runRoute = createRoute({
@@ -125,7 +192,18 @@ export const runRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): { job?: number } => ({
     job: search.job === undefined ? undefined : Number(search.job),
   }),
-  component: RunPage,
+  component: function LegacyRunRoute() {
+    const { owner, repo, runId } = runRoute.useParams()
+    const { job } = runRoute.useSearch()
+    return (
+      <Navigate
+        to="/repo/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ tab: "actions", run: Number(runId), job }}
+        replace
+      />
+    )
+  },
 })
 
 const routeTree = rootRoute.addChildren([

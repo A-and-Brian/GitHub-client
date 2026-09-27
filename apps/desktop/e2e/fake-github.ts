@@ -131,9 +131,18 @@ export async function fakeGitHub(
       workflowName?: string | null
     }>
     commentCount?: number
+    repositoryReadme?: boolean
   } = {},
 ) {
   const settings = {
+    id: 1,
+    full_name: "acme/api",
+    name: "api",
+    owner: { login: "acme" },
+    private: true,
+    archived: false,
+    default_branch: "main",
+    html_url: "https://github.com/acme/api",
     description: "API service",
     homepage: "https://example.com",
     has_issues: true,
@@ -197,6 +206,102 @@ export async function fakeGitHub(
         Object.assign(settings, body)
       }
       return json(route, settings)
+    }
+    if (url.pathname === "/repos/acme/api/pulls")
+      return json(route, [
+        {
+          node_id: "PR_1",
+          number: 7,
+          title: options.pullTitle ?? pullNode.title,
+          html_url: pullNode.url,
+          user: { login: "hubot", avatar_url: "" },
+          draft: false,
+          created_at: pullNode.createdAt,
+          updated_at: pullNode.updatedAt,
+          head: { ref: "fast-diff", sha: options.headOid ?? "abc123" },
+          base: { ref: "main" },
+          requested_reviewers: [{ login: "octo" }],
+        },
+      ])
+    if (url.pathname === "/repos/acme/api/branches")
+      return json(route, [{ name: "main" }, { name: "feature" }])
+    if (url.pathname === "/repos/acme/api/readme") {
+      if (options.repositoryReadme === false)
+        return route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: '{"message":"Not Found"}',
+        })
+      if (request.headers().accept?.includes("application/vnd.github.html+json"))
+        return route.fulfill({
+          status: 200,
+          contentType: "text/html",
+          body: "<h1>Repository guide</h1>",
+        })
+      return json(route, {
+        name: "README.md",
+        path: "README.md",
+        type: "file",
+        size: 20,
+        html_url: "https://github.com/acme/api/blob/main/README.md",
+      })
+    }
+    if (url.pathname.startsWith("/repos/acme/api/contents")) {
+      const contentPath = decodeURIComponent(
+        url.pathname.slice("/repos/acme/api/contents".length).replace(/^\//, ""),
+      )
+      if (contentPath === "")
+        return json(route, [
+          {
+            name: "README.md",
+            path: "README.md",
+            type: "file",
+            size: 20,
+            html_url: "https://github.com/acme/api/blob/main/README.md",
+          },
+          {
+            name: "src",
+            path: "src",
+            type: "dir",
+            size: 0,
+            html_url: "https://github.com/acme/api/tree/main/src",
+          },
+        ])
+      if (contentPath === "src")
+        return json(route, [
+          {
+            name: "index.ts",
+            path: "src/index.ts",
+            type: "file",
+            size: 14,
+            html_url: "https://github.com/acme/api/blob/main/src/index.ts",
+          },
+        ])
+      if (contentPath === "README.md")
+        return json(route, {
+          name: "README.md",
+          path: "README.md",
+          type: "file",
+          size: 20,
+          encoding: "base64",
+          content: "IyBSZXBvc2l0b3J5IGd1aWRlCg==",
+          html_url: "https://github.com/acme/api/blob/main/README.md",
+        })
+      if (contentPath === "src/index.ts")
+        return json(route, {
+          name: "index.ts",
+          path: "src/index.ts",
+          type: "file",
+          size: 14,
+          encoding: "base64",
+          content: "ZXhwb3J0IHsgfSA=",
+          html_url: "https://github.com/acme/api/blob/main/src/index.ts",
+        })
+      return route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: '{"message":"Not Found"}',
+      })
     }
     if (url.pathname === "/user/starred") return json(route, [])
     if (url.pathname === "/graphql") {

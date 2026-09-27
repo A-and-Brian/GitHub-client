@@ -121,8 +121,8 @@ test("home and scoped dashboards discover repositories without PRs and retain de
     /docs.*guide\.md/,
   )
   await page.getByRole("button", { name: "Pull requests", exact: true }).click()
-  await expect(page.getByText("No open pull requests.", { exact: true })).toBeVisible()
-  await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(0)
+  await expect(page.getByText("No active pull requests.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible()
   await page.goBack()
   await page.goBack()
   await expect(page.getByRole("heading", { name: "Backend", exact: true })).toBeVisible()
@@ -216,7 +216,9 @@ test("empty repositories are distinct from inaccessible contents", async ({ page
     }),
   )
   await page.reload()
-  await expect(page.getByRole("alert")).toContainText("Could not load repository contents")
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Could not load repository contents" }),
+  ).toBeVisible()
   await expect(page.getByText("This repository is empty and has no files yet.")).toHaveCount(0)
 })
 
@@ -279,6 +281,8 @@ test("cached repository content stays visible when refresh fails", async ({ page
   await setup(page)
   await page.goto("/#/repo/acme/handbook?tab=code&path=docs%2Fguide.md")
   await expect(page.locator("pre")).toContainText("Guide on main")
+  // Visible content can still be saving; finish the initial cache operation before refreshing.
+  await expect(page.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
   await page.route("https://api.github.com/repos/acme/handbook/contents**", (route) =>
     route.fulfill({
       status: 503,
@@ -286,7 +290,13 @@ test("cached repository content stays visible when refresh fails", async ({ page
       body: JSON.stringify({ message: "Unavailable" }),
     }),
   )
+  const failedRefresh = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/repos/acme/handbook/contents/docs/guide.md" &&
+      response.status() === 503,
+  )
   await page.getByRole("button", { name: "Refresh repository", exact: true }).click()
+  await failedRefresh
   await expect(page.getByText(/Saved data.*could not refresh/i)).toBeVisible()
   await expect(page.locator("pre")).toContainText("Guide on main")
   await expect(page.getByText("Loading repository contents…")).toHaveCount(0)
@@ -361,7 +371,11 @@ test("repository pull pages retry the failed page and retain rows and focus duri
     releaseRefresh = resolve
   })
   const pull = (number: number) => ({
+    node_id: `PR_handbook_${number}`,
     number,
+    created_at: "2026-09-27T00:00:00Z",
+    head: { ref: "feature", sha: "abc123" },
+    base: { ref: "main" },
     title: `Saved pull ${number}`,
     state: "open",
     draft: false,
@@ -391,13 +405,16 @@ test("repository pull pages retry the failed page and retain rows and focus duri
     })
   })
   await page.goto("/#/repo/acme/handbook?tab=pulls")
-  const first = page.getByRole("link", { name: "#1 Saved pull 1 octo", exact: true })
+  const inbox = page.getByRole("complementary", { name: "Pull request inbox" })
+  const first = inbox.getByRole("button", { name: "acme/handbook #1: Saved pull 1", exact: true })
   await expect(first).toBeVisible()
-  await page.getByRole("button", { name: "Load more", exact: true }).click()
-  await expect(page.getByTestId("repository-cache-status")).toContainText("could not refresh")
-  await page.getByRole("button", { name: "Retry", exact: true }).click()
-  await expect(page.getByRole("link", { name: /#99 Saved pull 99/ })).toBeVisible()
-  await expect(page.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
+  await page.getByRole("button", { name: "Load more pull requests", exact: true }).click()
+  await expect(inbox.getByTestId("repository-cache-status")).toContainText("could not refresh")
+  await inbox.getByRole("button", { name: "Retry", exact: true }).click()
+  await expect(
+    inbox.getByRole("button", { name: "acme/handbook #99: Saved pull 99", exact: true }),
+  ).toBeVisible()
+  await expect(inbox.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
   await first.focus()
   const before = await first.boundingBox()
   holdRefresh = true
@@ -409,7 +426,7 @@ test("repository pull pages retry the failed page and retain rows and focus duri
   expect(await first.boundingBox()).toEqual(before)
   await expect(page.getByText("Loading pull requests…", { exact: true })).toHaveCount(0)
   releaseRefresh?.()
-  await expect(page.getByTestId("repository-cache-status")).toContainText("Saved for offline use")
+  await expect(inbox.getByTestId("repository-cache-status")).toContainText("Saved for offline use")
   await expect(first).toBeFocused()
   expect(await first.boundingBox()).toEqual(before)
   await page.route("https://api.github.com/repos/acme/handbook/pulls*", (route) =>
@@ -421,7 +438,7 @@ test("repository pull pages retry the failed page and retain rows and focus duri
   )
   await page.clock.setSystemTime(Date.now() + 122_000)
   await page.evaluate(() => window.dispatchEvent(new Event("online")))
-  await expect(page.getByTestId("repository-cache-status")).toContainText("could not refresh")
+  await expect(inbox.getByTestId("repository-cache-status")).toContainText("could not refresh")
   await expect(first).toBeFocused()
   expect(await first.boundingBox()).toEqual(before)
 })
@@ -466,8 +483,9 @@ test("saved empty catalogs and PR lists remain resolved when refresh fails", asy
   await expect(page.getByText("No repositories found.", { exact: true })).toBeVisible()
   await expect(page.getByRole("link", { name: "View all repositories", exact: true })).toBeVisible()
   await page.goto("/#/repo/acme/handbook?tab=pulls")
-  await expect(page.getByText("No open pull requests.", { exact: true })).toBeVisible()
-  await expect(page.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
+  const inbox = page.getByRole("complementary", { name: "Pull request inbox" })
+  await expect(page.getByText("No active pull requests.", { exact: true })).toBeVisible()
+  await expect(inbox.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
   await page.route("https://api.github.com/repos/acme/handbook/pulls*", (route) =>
     route.fulfill({
       status: 503,
@@ -475,7 +493,7 @@ test("saved empty catalogs and PR lists remain resolved when refresh fails", asy
       body: JSON.stringify({ message: "Unavailable" }),
     }),
   )
-  await page.getByRole("button", { name: "Refresh repository", exact: true }).click()
-  await expect(page.getByTestId("repository-cache-status")).toContainText("could not refresh")
-  await expect(page.getByText("No open pull requests.", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Refresh inbox", exact: true }).click()
+  await expect(inbox.getByTestId("repository-cache-status")).toContainText("could not refresh")
+  await expect(page.getByText("No active pull requests.", { exact: true })).toBeVisible()
 })

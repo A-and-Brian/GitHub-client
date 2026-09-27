@@ -124,6 +124,50 @@ describe("PR inbox", () => {
     expect(rows[0]).toMatchObject({ pull: { groupId: "org:acme" }, state: "active" })
   })
 
+  test("entity scopes preserve membership across deduplication and intersect personal involvement", () => {
+    const teamCopy = pull({ groupId: team.id, key: `${team.id}:PR_1`, author: "other" })
+    const personalCopy = pull({
+      groupId: "me",
+      key: "me:PR_1",
+      author: "other",
+      syncedAt: "2026-09-27T10:00:00Z",
+    })
+    const unrelated = pull({ id: "PR_2", key: "org:acme:PR_2", repo: "acme/other" })
+    const rows = [teamCopy, personalCopy, unrelated]
+    expect(
+      deriveInboxPulls(rows, [org, team], "yi", [], 100, "all", { groupId: team.id }).map(
+        (row) => row.pull.id,
+      ),
+    ).toEqual(["PR_1"])
+    expect(
+      deriveInboxPulls(rows, [org, team], "yi", [], 100, "involving", { groupId: team.id }).map(
+        (row) => row.pull.id,
+      ),
+    ).toEqual(["PR_1"])
+    expect(
+      deriveInboxPulls(rows, [org, team], "yi", [], 100, "all", { repo: "ACME/API" }).map(
+        (row) => row.pull.id,
+      ),
+    ).toEqual(["PR_1"])
+    expect(
+      deriveInboxPulls(rows, [org, team], "yi", [], 100, "all", { groupId: "team:acme/design" }),
+    ).toEqual([])
+  })
+
+  test("the same preference follows a PR across entity scopes without changing hidden order", async () => {
+    const collections = createCollections(db.open())
+    const row = pull()
+    await settleInboxPull(collections.inboxPreferences, "yi", row, 100)
+    const preferences = [...collections.inboxPreferences.collection.values()]
+    const rows = [row, pull({ groupId: team.id, key: `${team.id}:PR_1` })]
+    for (const entity of [{ groupId: org.id }, { groupId: team.id }, { repo: row.repo }]) {
+      const derived = deriveInboxPulls(rows, [org, team], "yi", preferences, 100, "all", entity)
+      expect(derived[0]?.state).toBe("settled")
+      expect(derived[0]?.preference).toEqual(preferences[0])
+    }
+    expect([...collections.inboxPreferences.collection.values()]).toEqual(preferences)
+  })
+
   test("uses the fresher check snapshot when duplicate rows share updatedAt", async () => {
     const collections = createCollections(db.open())
     const baseline = pull({ checkState: "SUCCESS" })

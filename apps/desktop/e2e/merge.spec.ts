@@ -31,7 +31,9 @@ test("merge confirmation can be canceled without sending a request", async ({ pa
   await expect(confirm).toBeVisible()
   await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible()
   await expect(page.getByText(/Squash and merge for acme\/api#7 into main/i)).toBeVisible()
-  await expect(page.getByRole("combobox")).toHaveCount(0)
+  await expect(
+    page.getByRole("group", { name: "Merge pull request" }).getByRole("combobox"),
+  ).toHaveCount(0)
   await page.getByRole("button", { name: "Cancel" }).click()
 
   await expect(merge).toBeVisible()
@@ -57,7 +59,7 @@ test("confirmation submits the selected method and head SHA once while pending",
   })
   const requests = await fakeGitHub(page, { mergeGate })
   await openPull(page)
-  await page.getByRole("combobox").click()
+  await page.getByRole("group", { name: "Merge pull request" }).getByRole("combobox").click()
   await page.getByRole("option", { name: "Create a merge commit" }).click()
   const merge = page.getByRole("button", { name: "Create a merge commit" })
   await expect(merge).toBeVisible()
@@ -138,7 +140,7 @@ test("a changed head revision invalidates confirmation", async ({ page }) => {
     page.getByRole("button", { name: "Refresh", exact: true }).locator(".animate-spin"),
   ).toHaveCount(0)
   options.headOid = "new456"
-  await page.getByRole("button", { name: "Refresh" }).click()
+  await page.getByRole("button", { name: "Refresh", exact: true }).click()
   await expect(page.getByRole("button", { name: "Confirm merge" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Squash and merge" })).toBeVisible()
   expect(requests.filter((request) => request.path.endsWith("/merge"))).toHaveLength(0)
@@ -147,7 +149,9 @@ test("a changed head revision invalidates confirmation", async ({ page }) => {
 test("a repository with one merge method can be confirmed", async ({ page }) => {
   const requests = await fakeGitHub(page, { mergeMethods: ["squash"] })
   const merge = await openPull(page)
-  await expect(page.getByRole("combobox")).toHaveCount(0)
+  await expect(
+    page.getByRole("group", { name: "Merge pull request" }).getByRole("combobox"),
+  ).toHaveCount(0)
   await merge.click()
   await expect(page.getByRole("button", { name: "Confirm merge" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible()

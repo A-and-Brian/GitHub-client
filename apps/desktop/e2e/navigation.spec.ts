@@ -148,13 +148,13 @@ test("repository destinations remain consistent", async ({ page }, info) => {
   await nav.getByRole("link", { name: "Actions", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Workflow runs" })).toBeVisible()
   await page.screenshot({ path: info.outputPath("actions.png") })
-  await nav.getByRole("link", { name: "Settings", exact: true }).click()
+  await nav.getByRole("button", { name: "Settings", exact: true }).click()
   await expect(page.getByLabel("Description", { exact: true })).toHaveValue("API service")
   await page.screenshot({ path: info.outputPath("settings.png") })
   await page.goto("/#/pr/acme/api/7")
   await expect(page.getByText("Virtualizes the diff rows.")).toBeVisible()
   await page.screenshot({ path: info.outputPath("standalone.png") })
-  await nav.getByRole("link", { name: "Inbox", exact: true }).click()
+  await page.getByRole("link", { name: "Inbox", exact: true }).click()
   await expect(inbox(page)).toBeVisible()
 })
 
@@ -241,13 +241,20 @@ test("Actions run retains its repository context and confirmation boundary", asy
   await signIn(page)
   await page.goto("/#/actions/acme/api/runs/9")
   await expect(page.getByRole("heading", { name: "Verify navigation" })).toBeVisible()
-  const nav = page.getByRole("navigation", { name: "Repository navigation" })
-  await expect(nav.getByRole("link", { name: "Actions", exact: true })).toBeVisible()
-  await expect(nav.getByRole("link", { name: "Settings", exact: true })).toBeVisible()
+  const nav = page.getByRole("navigation", { name: "Repository navigation", includeHidden: true })
+  await expect(
+    nav.getByRole("button", { name: "Actions", exact: true, includeHidden: true }),
+  ).toBeVisible()
+  await expect(
+    nav.getByRole("button", { name: "Settings", exact: true, includeHidden: true }),
+  ).toBeVisible()
   await page.screenshot({ path: info.outputPath("run.png") })
   await page.getByRole("button", { name: "Re-run all jobs", exact: true }).click()
   await expect(page.getByRole("dialog", { name: "Re-run all jobs" })).toBeVisible()
-  await page.getByRole("dialog").getByRole("button", { name: "Back", exact: true }).click()
+  await page
+    .getByRole("dialog", { name: "Re-run all jobs" })
+    .getByRole("button", { name: "Back", exact: true })
+    .click()
   expect(requests.filter((r) => r.method !== "GET" && r.path !== "/graphql")).toEqual([])
 })
 
@@ -265,5 +272,7 @@ test("long PR titles and offline status remain readable on a phone", async ({ pa
   expect(await page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: info.outputPath("offline-long-title.png") })
   await page.getByRole("button", { name: "Back to inbox" }).click()
-  await expect(page.getByLabel("Filter inbox")).toBeFocused()
+  await expect(
+    inbox(page).getByRole("button", { name: `acme/api #7: ${title}`, exact: true }),
+  ).toBeFocused()
 })

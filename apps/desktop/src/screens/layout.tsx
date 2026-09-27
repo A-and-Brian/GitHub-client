@@ -213,6 +213,11 @@ export function AccountSyncFooter() {
                 localStorage.setItem(SIGNED_OUT_KEY, "1")
                 localStorage.removeItem(VIEWER_KEY)
                 await client.signOut()
+                window.history.replaceState(
+                  null,
+                  "",
+                  `${window.location.pathname}${window.location.search}#/inbox`,
+                )
                 window.location.reload()
               } catch (error) {
                 showError("Could not sign out", error)

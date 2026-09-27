@@ -29,7 +29,15 @@ const REVIEW_TEXT: Record<string, string> = {
   PENDING: "started a review",
 }
 
-export function ConversationTab({ detail }: { detail: PullRequestDetail }) {
+export function ConversationTab({
+  detail,
+  onRunSelect,
+  checksRailRef,
+}: {
+  detail: PullRequestDetail
+  onRunSelect?: (runId: number, jobId?: number) => void
+  checksRailRef?: React.RefObject<HTMLElement | null>
+}) {
   const [owner, repo] = detail.repo.split("/") as [string, string]
   const unresolved = detail.threads.filter((t) => !t.isResolved)
   return (
@@ -74,11 +82,13 @@ export function ConversationTab({ detail }: { detail: PullRequestDetail }) {
           <CommentBox detail={detail} />
         </div>
         <aside
+          ref={checksRailRef}
           className="pull-conversation-checks w-fit min-w-0 max-w-full"
           aria-label="Pull request checks"
+          tabIndex={-1}
         >
           <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
-          <ChecksContent detail={detail} />
+          <ChecksContent detail={detail} onRunSelect={onRunSelect} />
         </aside>
       </div>
     </div>
