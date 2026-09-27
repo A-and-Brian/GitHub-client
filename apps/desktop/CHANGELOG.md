@@ -1,5 +1,19 @@
 # @github-client/desktop
 
+## 0.5.0
+
+### Minor Changes
+
+- [#23](https://github.com/Yis-company/GitHub-client/pull/23) [`870ab38`](https://github.com/Yis-company/GitHub-client/commit/870ab386532be4af3e7106cbfefee3625592af0d) Thanks [@ybtam](https://github.com/ybtam)! - Replace the PR-first home with organization and team dashboards, and let you browse repositories, branches, folders, files, and READMEs without relying on pull request activity.
+
+### Patch Changes
+
+- [#25](https://github.com/Yis-company/GitHub-client/pull/25) [`e07d774`](https://github.com/Yis-company/GitHub-client/commit/e07d774d0922db8c884d0ed573a1cb29a9bcc7b6) Thanks [@ybtam](https://github.com/ybtam)! - Size pull request conversation checks to fit their content and let the conversation fill the remaining width.
+
+- [#22](https://github.com/Yis-company/GitHub-client/pull/22) [`4e31059`](https://github.com/Yis-company/GitHub-client/commit/4e31059cf229761c76717578e6c6f0bf6212fb9d) Thanks [@ybtam](https://github.com/ybtam)! - Make pull request numbers more prominent in the inbox, group list, and detail header.
+
+- [#24](https://github.com/Yis-company/GitHub-client/pull/24) [`3aa0c33`](https://github.com/Yis-company/GitHub-client/commit/3aa0c33e46d138a41eac792d325c335328a722e7) Thanks [@ybtam](https://github.com/ybtam)! - Keep desktop SQLite transactions on one stable connection to prevent database lock errors during synchronization.
+
 ## 0.4.0
 
 ### Minor Changes
