@@ -1,0 +1,112 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Integrated native window controls</title><script>try{const s=localStorage.getItem('plan-theme');document.documentElement.classList.toggle('dark',s?s==='dark':matchMedia('(prefers-color-scheme: dark)').matches)}catch{document.documentElement.classList.toggle('dark',matchMedia('(prefers-color-scheme: dark)').matches)}</script><style>
+:root{color-scheme:light;--bg:#f7f7f5;--panel:#fff;--side:#f0f1f3;--fg:#20242c;--muted:#56606e;--line:#ccd1d8;--accent:#215dc0}html.dark{color-scheme:dark;--bg:#15171b;--panel:#1e2228;--side:#242830;--fg:#eef1f5;--muted:#afb8c7;--line:#414958;--accent:#9bbfff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:36px 22px 80px}h1{font-size:clamp(28px,5vw,42px);line-height:1.15;margin:12px 0}h2{font-size:22px;margin-top:32px}p{max-width:78ch}small,.muted{color:var(--muted)}button{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);padding:7px 12px;border-radius:7px;cursor:pointer}button:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:20px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin:18px 0}.mock{display:grid;grid-template-columns:208px minmax(160px,1fr);min-height:250px;border:1px solid var(--line);border-radius:10px;overflow:hidden}.sidebar{background:var(--side);border-right:1px solid var(--line)}.chrome{height:40px;display:flex;align-items:center;padding-right:12px;gap:6px}.lights{width:80px;flex:none;padding-left:12px;display:flex;gap:7px}.dot{width:12px;height:12px;border-radius:50%;background:#ff615a}.dot:nth-child(2){background:#ffbf32}.dot:nth-child(3){background:#2bc941}.drag{flex:1;font-size:10px;color:var(--muted)}.chooser{font-size:12px;white-space:nowrap}.content{padding:12px;font-size:13px}.title{font-weight:650;margin-bottom:10px}.field{border:1px solid var(--line);border-radius:5px;padding:5px;font-size:11px;margin-bottom:10px}.row{border-top:1px solid var(--line);padding:9px 0;color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid .card{margin:0}li{margin:7px 0}code{overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.65 ui-monospace,monospace}summary{font-weight:650;cursor:pointer}@media(max-width:620px){.grid{grid-template-columns:1fr}.mock{grid-template-columns:208px minmax(100px,1fr)}.mock-wrap{overflow:auto}.mock{min-width:350px}}
+</style></head><body><main><div class="toolbar"><small>PLAN REVIEW · 26 SEPTEMBER 2026</small><button id="theme" type="button" aria-label="Toggle dark theme">Toggle theme</button></div><h1>Native controls inside the outer navigation</h1><section class="card"><strong>Updated by explicit user instruction after approval</strong><pre>
+
+## Approved-scope amendment: persistent outer navigation
+
+The user explicitly requested restoring GlobalGroupRail on Inbox during implementation. This amendment supersedes the original Inbox chrome placement and records direct user authorization.
+
+- GlobalGroupRail stays visible across authenticated desktop routes and owns search, organization/team navigation, and the account/sync footer.
+- Native macOS traffic lights and blank drag region belong at the top of this outer rail, with search beneath.
+- The T3 PR sidebar stays inside Inbox alongside its detail pane. Remove the inner group chooser and duplicate account footer. Keep contributions inside the PR sidebar.
+- Preserve the mobile navigation drawer, navigation button, dismissal and return-to-list behavior.
+- Measure available Inbox container width, not viewport width: the outer rail consumes 240px. Preserve 208px minimum list and 640px detail space, and saved preferred sidebar width.
+- At native minimum 900px, outer navigation remains visible while Inbox uses single-pane list/detail mode. Wide desktop shows all three columns.
+- Recheck container resizing, navigation, selection, PR DnD and native controls. Browser receives no macOS safe area.
+- Rollback reverts layout amendment and container measurement together, preserving user data/preferences.
+</pre></section><p>Remove the separate gray macOS title strip. Keep the real traffic lights and let the existing sidebar background reach the top edge.</p><div class="card"><strong>Original mockup — superseded by the amendment above</strong><div class="mock-wrap"><div class="mock" role="img" aria-label="Native traffic lights and Inbox chooser occupy the first sidebar row. PR inbox title, filters and rows follow. Detail content remains full height."><div class="sidebar"><div class="chrome"><div class="lights"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><span class="drag">drag</span><span class="chooser">Inbox ▾</span></div><div class="content"><div class="title">PR inbox</div><div class="field">Filter PRs /　　Scope ▾</div><div>Failures　↻　ⓘ</div><div class="row">Existing pull request</div><div class="row">Existing pull request</div></div></div><div class="content"><strong>Existing PR detail header</strong><p class="muted">Full-height detail content.</p><p class="muted">No new global title bar.</p></div></div></div><small>Illustrative native dots, never HTML controls in the product. Initial shared inset: 80px wide × 40px high; verify on real macOS.</small></div><h2>Small implementation scope</h2><ol><li>Set Tauri <code>titleBarStyle: Overlay</code> and <code>hiddenTitle: true</code>. Keep native decorations and positions.</li><li>Add one shared macOS-desktop chrome helper and the narrow start-dragging capability.</li><li>Integrate the Inbox top row, global navigation rail, and Boot loading/setup/error safe space. Keep Go to below the native controls on other routes.</li><li>Mark only blank chrome as draggable. Preserve all controls, PR drag-and-drop and sidebar resizing.</li></ol><div class="grid"><section class="card"><h2>Acceptance</h2><p>No gray title strip; usable native controls; fit at 208px and 256px sidebars and 900 × 600 window size. All routes and startup states stay clear of native controls.</p><p>Browser and non-macOS layout stays unchanged. Fullscreen keeps stable safe spacing and native control ownership.</p></section><section class="card"><h2>Proof required</h2><p>Typecheck, build, changed-file lint, relevant navigation/Inbox browser tests and Cargo check.</p><p>Real macOS smoke checks cover themes, native dragging/buttons, fullscreen reveal/exit, resizing and PR DnD. Browser checks do not establish native behavior.</p></section></div><h2>Risks and rollback</h2><p>Confirm native geometry before finalizing inset constants. Isolate drag hit areas from interactive content. Check setup height and errors separately from router pages.</p><p>Rollback reverts the overlay configuration, drag capability and scoped frontend chrome changes together. There is no data migration or saved-width change.</p><p><strong>Approval gate:</strong> implementation waits for an approved structured Plannotator decision.</p><details class="card" open><summary>Canonical plan — complete scope, files and checks</summary><pre># Integrate native macOS window controls
+
+Remove the separate gray macOS title bar and show the existing native traffic lights over the app’s sidebar header. Keep native window decorations and controls. Scope is window chrome and safe spacing; GitHub behavior remains unchanged.
+
+## Evidence
+
+- `apps/desktop/src-tauri/tauri.conf.json` currently uses standard decorations; window minimum is 900 × 600.
+- `src/screens/inbox-geometry.ts` sets the inbox sidebar to 256px by default and allows 208px minimum.
+- `src/screens/inbox-header.tsx` puts “PR inbox” and the Inbox chooser on one row. Adding a traffic-light inset to that row would crowd it.
+- `src/screens/layout.tsx` owns all authenticated routes. Outside Inbox, its 240px rail starts with the Go to button.
+- `src/app/boot.tsx` separately renders loading, setup and startup errors.
+- `src/platform/index.ts` already exports `isDesktop`.
+- `src-tauri/capabilities/default.json` lacks explicit permission to start dragging.
+
+## Proposed layout
+
+macOS Inbox sidebar, including the 208px minimum:
+
+    ┌──────────────────────────┬─────────────────────────┐
+    │ ● ● ●   drag    Inbox ▾  │ Existing PR detail      │
+    │ PR inbox                 │ header and content      │
+    │ Filter /       Scope     │                         │
+    │ Failures  ↻  ⓘ           │                         │
+    │ Existing PR rows         │                         │
+
+Dots are illustrative: production uses native macOS controls, never HTML replacements.
+
+Use a 40px top row with an initial 80px left safe area. Keep the Inbox chooser at the right. Place the PR inbox heading immediately below on macOS; filters and actions follow. The row inherits the sidebar background and has no separate title-bar divider. The PR detail stays full height.
+
+For non-Inbox routes, place the same 40px native-control/drag slot at the top of the existing global rail; Go to stays full width directly below it. Other route content stays full height.
+
+During loading, setup and startup failure, reserve the same top space inside a viewport-height Boot wrapper, with a blank drag area. Let setup occupy the remaining height without introducing extra scrolling. Do not add a global replacement title bar to the authenticated app.
+
+## Implementation
+
+1. **Native configuration.** Set the main window’s `titleBarStyle` to `Overlay` and `hiddenTitle` to `true` in `src-tauri/tauri.conf.json`. Preserve decorations, native control positions, dimensions and fullscreen behavior. These options are macOS-specific. Add only `core:window:allow-start-dragging` to the main window capability. Native buttons require no replacement command handlers.
+2. **Shared window-chrome helper.** Add a small `src/components/window-chrome.tsx` that gates the inset and drag regions on Tauri plus a macOS platform check, reusing `isDesktop`. Keep the 40px row and 80px safe-area values in this one owner. Browser macOS and Windows/Linux desktop keep existing layout. Avoid a plugin dependency or fullscreen listener.
+3. **Integrate existing surfaces.** Update `src/screens/inbox-header.tsx`, `src/screens/layout.tsx` and `src/app/boot.tsx` as described above. Adjust `src/screens/setup.tsx` only if needed to let its existing full-height container fit the Boot wrapper. Keep Inbox resizing limits and saved width unchanged.
+4. **Restrict drag ownership.** Use dedicated blank `data-tauri-drag-region` elements beside the native controls. The chooser and every interactive element remain outside those elements. Never mark an entire header, sidebar, content pane, PR row or resize handle as draggable. Reserve native-control space even in fullscreen; macOS owns control visibility and reveal behavior.
+5. **Validate and review.** Complete the checks below, inspect the focused diff, and report native evidence separately from browser checks.
+
+All source paths above are relative to `apps/desktop/`. No new dependency, Rust window customization, custom traffic lights, data migration, or global header redesign is planned.
+
+## Acceptance criteria
+
+- macOS has no separate gray title strip or duplicate window title.
+- Native close, minimize and fullscreen controls remain visible and usable in normal mode.
+- Controls, heading and chooser fit at sidebar widths 208px and 256px and window minimum 900 × 600.
+- Blank header space moves the native window; chooser, search, scope, refresh, links and keyboard navigation work normally.
+- Sidebar resize and existing PR drag-and-drop retain their behavior.
+- Inbox, groups, pull pages, repository settings, Actions list/detail, loading, setup and startup-error views avoid native controls.
+- Fullscreen entry, exit and top-edge control reveal are usable; no custom fullscreen state or control emulation is introduced.
+- Light/dark themes look continuous at the top edge.
+- Browser and non-macOS desktop layouts retain their existing spacing and decorations.
+
+## Validation
+
+- Run `bun run typecheck` and `bun run build`.
+- Run Biome against changed source/config files.
+- Run relevant existing Playwright navigation and inbox-order checks with their existing fixtures. Add a targeted behavioral check only if existing coverage cannot prove a new interaction boundary.
+- Run `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml` to validate native configuration/capabilities.
+- In a real macOS Tauri window, inspect both themes, 208px/256px sidebar widths, 900 × 600 minimum size, all listed routes and Boot states. Exercise controls, dragging, resizing, PR DnD, and fullscreen entry/exit/top reveal.
+- Check browser rendering at desktop and narrow widths. Browser screenshots or mocked Tauri globals do not prove native control behavior.
+- Record unavailable platform/native checks explicitly; do not claim equivalent native snapping or title-bar double-click behavior without testing it.
+
+## Risks and mitigations
+
+- **Native control geometry:** 40px/80px are initial layout values. Confirm on the installed macOS/Tauri version and adjust these shared constants if necessary; retain native placement.
+- **Crowded sidebar:** separate the title and chooser rows on macOS, preserving the 208px minimum.
+- **Pointer interception:** dedicated blank drag elements isolate native dragging from actions, PR DnD and the separator.
+- **Missed startup state:** Boot owns non-router spacing, including errors; setup height must remain bounded by the viewport.
+- **Fullscreen differences:** keep the safe area stable and verify native reveal/exit. Escalate an actual native limitation before adding Rust customization.
+
+## Approval and rollback
+
+Review `plan.html` through:
+`plannotator annotate &lt;plan.html&gt; --gate --json --require-approval --result-file &lt;review.json&gt;`
+
+Implementation starts only after an approved structured decision. Preserve annotations with the artifacts.
+
+Rollback is a coordinated revert of the overlay options, drag permission and scoped frontend chrome changes. No stored data or persisted sidebar width changes, and no migration is needed.
+
+
+## Approved-scope amendment: persistent outer navigation
+
+The user explicitly requested restoring GlobalGroupRail on Inbox during implementation. This amendment supersedes the original Inbox chrome placement and records direct user authorization.
+
+- GlobalGroupRail stays visible across authenticated desktop routes and owns search, organization/team navigation, and the account/sync footer.
+- Native macOS traffic lights and blank drag region belong at the top of this outer rail, with search beneath.
+- The T3 PR sidebar stays inside Inbox alongside its detail pane. Remove the inner group chooser and duplicate account footer. Keep contributions inside the PR sidebar.
+- Preserve the mobile navigation drawer, navigation button, dismissal and return-to-list behavior.
+- Measure available Inbox container width, not viewport width: the outer rail consumes 240px. Preserve 208px minimum list and 640px detail space, and saved preferred sidebar width.
+- At native minimum 900px, outer navigation remains visible while Inbox uses single-pane list/detail mode. Wide desktop shows all three columns.
+- Recheck container resizing, navigation, selection, PR DnD and native controls. Browser receives no macOS safe area.
+- Rollback reverts layout amendment and container measurement together, preserving user data/preferences.
+</pre></details></main><script>document.getElementById('theme').addEventListener('click',()=>{const d=document.documentElement.classList.toggle('dark');try{localStorage.setItem('plan-theme',d?'dark':'light')}catch{}})</script></body></html>

@@ -36,33 +36,17 @@ import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
 import { useTheme } from "@/components/theme-provider"
+import { WindowChrome } from "@/components/window-chrome"
 import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
 const GROUP_ICONS = { me: UserIcon, org: BuildingIcon, team: UsersIcon, starred: StarIcon }
 
 export function Layout() {
-  const { client, viewer } = useSession()
-  const { theme, setTheme } = useTheme()
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const groups = useLiveQuery((q) =>
-    q.from({ g: client.collections.groups.collection }).orderBy(({ g }) => g.order, "asc"),
-  ).data
-  const pulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
-  const counts = new Map<string, number>()
-  for (const p of pulls) counts.set(p.groupId, (counts.get(p.groupId) ?? 0) + 1)
-  const tree = useMemo(() => buildGroupTree(groups), [groups])
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const lastPathname = useRef(pathname)
-  const [version, setVersion] = useState<string>()
-
-  useEffect(() => {
-    void appVersion()
-      .then(setVersion)
-      .catch((error) => showError("Could not read app version", error))
-  }, [])
 
   useEffect(() => {
     if (lastPathname.current !== pathname) {
@@ -83,99 +67,11 @@ export function Layout() {
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
-      <aside
-        className={cn(
-          "w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:relative md:flex",
-          mobileMenuOpen ? "fixed inset-y-0 left-0 z-50 flex" : "hidden md:flex",
-        )}
-      >
-        <div className="flex items-center gap-2 p-3">
-          <Button
-            variant="outline"
-            className="flex-1 justify-start text-muted-foreground"
-            onClick={() => setPaletteOpen(true)}
-          >
-            <SearchIcon />
-            Go to…
-            <Kbd className="ml-auto">Ctrl K</Kbd>
-          </Button>
-        </div>
-        <nav className="flex-1 overflow-y-auto px-2 pb-2">
-          <Link
-            to="/inbox"
-            className={cn(
-              "mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
-              pathname === "/inbox" && "bg-sidebar-accent font-medium",
-            )}
-          >
-            <InboxIcon className="size-4 shrink-0 text-muted-foreground" />
-            <span>Inbox</span>
-          </Link>
-          {groups.length === 0 && (
-            <p className="px-2 py-1 text-xs text-muted-foreground">Loading groups…</p>
-          )}
-          {tree.map((node) => (
-            <GroupNavNode
-              key={node.group.id}
-              node={node}
-              depth={0}
-              collapsed={collapsed}
-              setCollapsed={setCollapsed}
-              pathname={pathname}
-              counts={counts}
-            />
-          ))}
-        </nav>
-        <footer className="flex items-center gap-2 border-t p-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="gap-2" />}>
-              <UserAvatar src={viewer.avatarUrl} login={viewer.login} />
-              <span className="truncate">{viewer.login}</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {isDesktop && (
-                <>
-                  <DropdownMenuGroup>
-                    {version && <DropdownMenuLabel>GitHub-client {version}</DropdownMenuLabel>}
-                    <DropdownMenuItem onClick={() => void checkForUpdates({ manual: true })}>
-                      Check for updates
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                </>
-              )}
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Appearance</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={theme}
-                  onValueChange={(value) => setTheme(value as typeof theme)}
-                >
-                  <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={async () => {
-                  try {
-                    localStorage.setItem(SIGNED_OUT_KEY, "1")
-                    localStorage.removeItem(VIEWER_KEY)
-                    await client.signOut()
-                    window.location.reload()
-                  } catch (error) {
-                    showError("Could not sign out", error)
-                  }
-                }}
-              >
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <SyncIndicator />
-          <UpdateButton />
-        </footer>
-      </aside>
+      <GlobalGroupRail
+        pathname={pathname}
+        mobileMenuOpen={mobileMenuOpen}
+        onOpenPalette={() => setPaletteOpen(true)}
+      />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="border-b px-3 py-2 md:hidden">
           <Button variant="ghost" size="sm" onClick={() => setMobileMenuOpen(true)}>
@@ -187,6 +83,138 @@ export function Layout() {
       </main>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
+  )
+}
+
+function GlobalGroupRail({
+  pathname,
+  mobileMenuOpen,
+  onOpenPalette,
+}: {
+  pathname: string
+  mobileMenuOpen: boolean
+  onOpenPalette: () => void
+}) {
+  const { client } = useSession()
+  const groups = useLiveQuery((q) =>
+    q.from({ g: client.collections.groups.collection }).orderBy(({ g }) => g.order, "asc"),
+  ).data
+  const pulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
+  const counts = new Map<string, number>()
+  for (const pull of pulls) counts.set(pull.groupId, (counts.get(pull.groupId) ?? 0) + 1)
+  const tree = useMemo(() => buildGroupTree(groups), [groups])
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  return (
+    <aside
+      className={cn(
+        "w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:relative md:flex",
+        mobileMenuOpen ? "fixed inset-y-0 left-0 z-50 flex" : "hidden md:flex",
+      )}
+    >
+      <WindowChrome />
+      <div className="flex items-center gap-2 p-3">
+        <Button
+          variant="outline"
+          className="flex-1 justify-start text-muted-foreground"
+          onClick={onOpenPalette}
+        >
+          <SearchIcon />
+          Go to…
+          <Kbd className="ml-auto">Ctrl K</Kbd>
+        </Button>
+      </div>
+      <nav className="flex-1 overflow-y-auto px-2 pb-2">
+        <Link
+          to="/inbox"
+          className={cn(
+            "mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
+            pathname === "/inbox" && "bg-sidebar-accent font-medium",
+          )}
+        >
+          <InboxIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span>Inbox</span>
+        </Link>
+        {groups.length === 0 && (
+          <p className="px-2 py-1 text-xs text-muted-foreground">Loading groups…</p>
+        )}
+        {tree.map((node) => (
+          <GroupNavNode
+            key={node.group.id}
+            node={node}
+            depth={0}
+            collapsed={collapsed}
+            setCollapsed={setCollapsed}
+            pathname={pathname}
+            counts={counts}
+          />
+        ))}
+      </nav>
+      <AccountSyncFooter />
+    </aside>
+  )
+}
+
+export function AccountSyncFooter() {
+  const { client, viewer } = useSession()
+  const { theme, setTheme } = useTheme()
+  const [version, setVersion] = useState<string>()
+
+  useEffect(() => {
+    void appVersion()
+      .then(setVersion)
+      .catch((error) => showError("Could not read app version", error))
+  }, [])
+
+  return (
+    <footer className="flex min-h-12 items-center gap-2 border-t p-2">
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="gap-2" />}>
+          <UserAvatar src={viewer.avatarUrl} login={viewer.login} />
+          <span className="truncate">{viewer.login}</span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {isDesktop && (
+            <>
+              <DropdownMenuGroup>
+                {version && <DropdownMenuLabel>GitHub-client {version}</DropdownMenuLabel>}
+                <DropdownMenuItem onClick={() => void checkForUpdates({ manual: true })}>
+                  Check for updates
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={theme}
+              onValueChange={(value) => setTheme(value as typeof theme)}
+            >
+              <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={async () => {
+              try {
+                localStorage.setItem(SIGNED_OUT_KEY, "1")
+                localStorage.removeItem(VIEWER_KEY)
+                await client.signOut()
+                window.location.reload()
+              } catch (error) {
+                showError("Could not sign out", error)
+              }
+            }}
+          >
+            Sign out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <SyncIndicator />
+      <UpdateButton />
+    </footer>
   )
 }
 

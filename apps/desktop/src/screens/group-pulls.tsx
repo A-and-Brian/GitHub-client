@@ -139,13 +139,22 @@ export function GroupPulls() {
             {(index === 0 || visible[index - 1]?.repo !== pull.repo) && (
               <li className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-muted px-4 py-2 text-sm">
                 <h2 className="font-semibold break-all">{pull.repo}</h2>
-                <Link
-                  to="/settings/$owner/$repo"
-                  params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
-                  className="shrink-0 text-xs underline"
-                >
-                  Settings
-                </Link>
+                <div className="flex shrink-0 items-center gap-3 text-xs">
+                  <Link
+                    to="/actions/$owner/$repo"
+                    params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    Actions
+                  </Link>
+                  <Link
+                    to="/settings/$owner/$repo"
+                    params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
+                    className="shrink-0 text-xs underline"
+                  >
+                    Settings
+                  </Link>
+                </div>
               </li>
             )}
             <PullRow
