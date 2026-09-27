@@ -149,6 +149,8 @@ for (const viewport of [1280, 760]) {
     await fakeGitHub(page)
     const merge = await openPull(page)
     await expect(merge).toBeVisible()
+    // Cached details can render before the initial sync removes this header banner.
+    await expect(page.getByText(/Awaiting refresh/)).toBeHidden()
     const before = await merge.boundingBox()
     expect(before).not.toBeNull()
 
