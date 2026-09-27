@@ -31,7 +31,7 @@ export function useInboxGeometry(containerRef: RefObject<HTMLElement | null>) {
   }, [containerRef])
   const maximum = Math.max(MIN_WIDTH, availableWidth - DETAIL_WIDTH)
   const width = Math.max(MIN_WIDTH, Math.min(maximum, requestedWidth))
-  const mobile = availableWidth < MIN_WIDTH + DETAIL_WIDTH
+  const mobile = availableWidth < 1000
   const save = (next: number) => {
     const value = Math.max(MIN_WIDTH, Math.min(maximum, next))
     setRequestedWidth(value)

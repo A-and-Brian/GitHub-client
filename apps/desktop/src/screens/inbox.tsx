@@ -1,5 +1,6 @@
 import { DndContext, DragOverlay, pointerWithin } from "@dnd-kit/core"
 import {
+  type GitHubClient,
   type InboxMutationResult,
   type InboxPull,
   jobKeys,
@@ -7,7 +8,7 @@ import {
 } from "@github-client/core"
 import { cn } from "@github-client/ui/lib/utils"
 import { useLiveQuery } from "@tanstack/react-db"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
@@ -16,6 +17,7 @@ import { ContributionCalendar } from "@/components/contribution-calendar"
 import { useInboxDrag } from "./inbox-drag"
 import { useInboxGeometry } from "./inbox-geometry"
 import { InboxHeader } from "./inbox-header"
+import { useInboxLocation } from "./inbox-location"
 import { useInboxModel } from "./inbox-model"
 import { useInboxMutations } from "./inbox-mutations"
 import {
@@ -27,21 +29,53 @@ import {
 import { InboxRow } from "./inbox-row"
 import { type DropPosition, InboxSections } from "./inbox-sidebar"
 import { PullContent, type PullTab } from "./pull/pull-page"
+import { useRepositoryInboxData } from "./repository-inbox-data"
 
-export function Inbox() {
+type InboxViewState = {
+  text: string
+  scope: "involving" | "all"
+  failures: boolean
+  settledLimit: number
+  scroll: number
+}
+// Client lifetime bounds this cache to one signed-in session, including browser Back navigation.
+const savedViews = new WeakMap<GitHubClient, Map<string, InboxViewState>>()
+
+export function Inbox({
+  entityScope,
+  active = true,
+}: {
+  entityScope?: { groupId?: string; repo?: string }
+  active?: boolean
+}) {
   const { client, viewer } = useSession()
-  const pulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
+  const syncedPulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
   const groups = useLiveQuery((q) => q.from({ g: client.collections.groups.collection })).data
   const preferences = useLiveQuery((q) =>
     q.from({ p: client.collections.inboxPreferences.collection }),
   ).data
-  const [failures, setFailures] = useState(false)
+  const viewKey = `${viewer.login.toLowerCase()}:${entityScope?.groupId ?? entityScope?.repo ?? "global"}`
+  const [initialView] = useState(() => savedViews.get(client)?.get(viewKey))
+  const savedView = useRef(initialView)
+  const location = useInboxLocation()
+  const repositoryData = useRepositoryInboxData(entityScope?.repo)
+  const pulls = useMemo(() => {
+    const syncedIds = new Set(syncedPulls.map((pull) => pull.id))
+    return [...syncedPulls, ...repositoryData.items.filter((pull) => !syncedIds.has(pull.id))]
+  }, [syncedPulls, repositoryData.items])
+  const [selectedRepo, selectedNumber] = location.pull?.split("#") ?? []
+  const [selectedOwner, selectedName] = selectedRepo?.split("/") ?? []
+  const selectedPull = pulls.find((pull) => `${pull.repo}#${pull.number}` === location.pull)
+  const selectedId = selectedPull?.id ?? null
+  const tab = location.pullTab ?? "conversation"
+  const setTab = (pullTab: PullTab) => location.update({ pullTab }, true)
+  const [failures, setFailures] = useState(initialView?.failures ?? false)
   const [expanded, setExpanded] = useState(() => readShelfState(viewer.login))
-  const [settledLimit, setSettledLimit] = useState(10)
-  const [scope, setScope] = useState<"involving" | "all">("involving")
-  const [text, setText] = useState("")
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tab, setTab] = useState<PullTab>("conversation")
+  const [settledLimit, setSettledLimit] = useState(initialView?.settledLimit ?? 10)
+  const [scope, setScope] = useState<"involving" | "all">(
+    initialView?.scope ?? (entityScope ? "all" : "involving"),
+  )
+  const [text, setText] = useState(initialView?.text ?? "")
   const [now, setNow] = useState(Date.now)
   const [online, setOnline] = useState(() => navigator.onLine)
   const [orderReady, setOrderReady] = useState(false)
@@ -50,11 +84,27 @@ export function Inbox() {
   const [dropPosition, setDropPosition] = useState<DropPosition | null>(null)
   const search = useRef<HTMLInputElement>(null)
   const inboxPane = useRef<HTMLDivElement>(null)
+  const currentView = useRef<InboxViewState>({ text, scope, failures, settledLimit, scroll: 0 })
+  useLayoutEffect(() => {
+    currentView.current = { ...currentView.current, text, scope, failures, settledLimit }
+  }, [text, scope, failures, settledLimit])
+  useEffect(() => {
+    const pane = inboxPane.current
+    return () => {
+      const views = savedViews.get(client) ?? new Map<string, InboxViewState>()
+      views.set(viewKey, {
+        ...currentView.current,
+        scroll: pane?.querySelector(".inbox-primary-list")?.scrollTop ?? 0,
+      })
+      savedViews.set(client, views)
+    }
+  }, [client, viewKey])
   const orderAccount = useRef(viewer.login)
   const geometry = useInboxGeometry(inboxPane)
   const { busyIds, latestUndo, runMutation, runRowMutation } = useInboxMutations()
-  useWatch((c) => c.watchGroup("me"), [])
-  const status = useJobStatus(jobKeys.groupPulls("me"))
+  const watchedGroup = entityScope?.groupId ?? "me"
+  useWatch((c) => (active ? c.watchGroup(watchedGroup) : () => {}), [watchedGroup, active])
+  const status = useJobStatus(jobKeys.groupPulls(watchedGroup))
   useEffect(() => () => cancelInboxDragOnUnmount(), [])
   useErrorToast(status?.error, { id: "inbox-sync-error", title: "Could not refresh inbox" })
   const [reconcileError, setReconcileError] = useState<unknown>(null)
@@ -87,8 +137,10 @@ export function Inbox() {
     selectedId,
     expanded,
     settledLimit,
+    entityScope,
   })
   useEffect(() => {
+    if (!active) return
     let current = true
     setOrderReady(false)
     void client
@@ -102,16 +154,16 @@ export function Inbox() {
     return () => {
       current = false
     }
-  }, [client, viewer.login, fullEntries])
+  }, [client, viewer.login, fullEntries, active])
   useEffect(() => {
     if (orderAccount.current !== viewer.login) {
       orderAccount.current = viewer.login
       setExpanded(readShelfState(viewer.login))
       setSettledLimit(10)
-      setSelectedId(null)
+      location.update({ pull: undefined, pullTab: undefined, run: undefined, job: undefined }, true)
       latestUndo.current = null
     }
-  }, [latestUndo, viewer.login])
+  }, [latestUndo, viewer.login, location.update])
   useEffect(() => {
     try {
       localStorage.setItem(shelfStorageKey(viewer.login), JSON.stringify(expanded))
@@ -120,6 +172,7 @@ export function Inbox() {
     }
   }, [expanded, viewer.login])
   useEffect(() => {
+    if (!active) return
     const tick = () => {
       setNow(Date.now())
       setOnline(navigator.onLine)
@@ -134,12 +187,13 @@ export function Inbox() {
       window.removeEventListener("online", tick)
       window.removeEventListener("offline", tick)
     }
-  }, [])
+  }, [active])
   // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile when preferences hydrate or change
   useEffect(() => {
+    if (!active) return
     let cancelled = false
     void client
-      .reconcileInboxState(viewer.login, pulls, now, groups)
+      .reconcileInboxState(viewer.login, syncedPulls, now, groups)
       .then(() => {
         if (!cancelled) setReconcileError(null)
       })
@@ -149,8 +203,14 @@ export function Inbox() {
     return () => {
       cancelled = true
     }
-  }, [client, viewer.login, pulls, groups, preferences, now])
-  const dragDisabled = failures || !orderReady
+  }, [client, viewer.login, syncedPulls, groups, preferences, now, active])
+  useEffect(() => {
+    if (!savedView.current || fullEntries.length === 0 || !active) return
+    const list = inboxPane.current?.querySelector(".inbox-primary-list")
+    if (list) list.scrollTop = savedView.current.scroll
+    savedView.current = undefined
+  }, [fullEntries.length, active])
+  const dragDisabled = Boolean(entityScope) || failures || !orderReady
 
   const select = (pull: PullRequest) => {
     const entry = fullEntries.find((item) => item.pull.id === pull.id)
@@ -160,8 +220,12 @@ export function Inbox() {
       const index = settledEntries.findIndex((item) => item.pull.id === pull.id)
       if (index >= settledLimit) setSettledLimit(index + 1)
     }
-    setSelectedId(pull.id)
-    setTab("conversation")
+    location.update({
+      pull: `${pull.repo}#${pull.number}`,
+      pullTab: undefined,
+      run: undefined,
+      job: undefined,
+    })
   }
   const navigable = failures
     ? failuresList
@@ -186,7 +250,10 @@ export function Inbox() {
         ?.scrollIntoView({ block: "nearest" }),
     )
   }
-  useShortcuts({ j: () => step(1), k: () => step(-1), "/": () => search.current?.focus() })
+  useShortcuts(
+    { j: () => step(1), k: () => step(-1), "/": () => search.current?.focus() },
+    active && !location.run,
+  )
 
   const applyDetailMutation = (
     label: string,
@@ -201,7 +268,7 @@ export function Inbox() {
     activeEntries,
     settledEntries,
     failures,
-    orderReady,
+    orderReady: orderReady && !entityScope,
     draggingId,
     dragOverId,
     setDraggingId,
@@ -287,7 +354,7 @@ export function Inbox() {
           style={{ width: geometry.mobile ? "100%" : geometry.width }}
           className={cn(
             "relative flex min-h-0 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground",
-            geometry.mobile && selected ? "hidden" : "flex",
+            geometry.mobile && location.pull ? "hidden" : "flex",
           )}
         >
           <InboxHeader
@@ -299,11 +366,31 @@ export function Inbox() {
             failures={failures}
             onToggleFailures={() => setFailures((value) => !value)}
             onRefresh={() => {
-              void Promise.all(groups.map((group) => client.refresh(jobKeys.groupPulls(group.id))))
+              if (entityScope?.repo) repositoryData.refresh()
+              else if (entityScope?.groupId)
+                void client.refresh(jobKeys.groupPulls(entityScope.groupId))
+              else
+                void Promise.all(
+                  groups.map((group) => client.refresh(jobKeys.groupPulls(group.id))),
+                )
             }}
-            refreshing={Boolean(status?.running)}
+            refreshing={entityScope?.repo ? repositoryData.loading : Boolean(status?.running)}
             online={online}
           />
+          {entityScope && (
+            <p className="px-4 py-2 text-xs text-muted-foreground">
+              Filtered to {entityScope.repo ?? entityScope.groupId?.replace(/^(org|team):/, "")}.
+              Reordering is available in the global Inbox.
+            </p>
+          )}
+          {Boolean(repositoryData.error) && (
+            <div role="alert" className="p-3 text-sm">
+              Could not load repository pull requests.{" "}
+              <button type="button" onClick={repositoryData.retry} className="underline">
+                Retry
+              </button>
+            </div>
+          )}
           <InboxSections
             failures={failures}
             failuresList={failuresList}
@@ -324,7 +411,21 @@ export function Inbox() {
             onToggleShelf={toggleExpanded}
             onShowMoreSettled={() => setSettledLimit((limit) => limit + 25)}
           />
-          <ContributionCalendar />
+          {repositoryData.loading && (
+            <p role="status" className="p-3 text-sm">
+              Loading repository pull requests…
+            </p>
+          )}
+          {repositoryData.more && !repositoryData.loading && !repositoryData.error && (
+            <button
+              type="button"
+              className="p-3 text-sm underline"
+              onClick={repositoryData.loadMore}
+            >
+              Load more pull requests
+            </button>
+          )}
+          {!entityScope && <ContributionCalendar />}
           {!geometry.mobile && (
             <div
               {...geometry.separatorProps}
@@ -336,21 +437,38 @@ export function Inbox() {
           aria-label="Selected pull request"
           className={cn(
             "flex min-w-0 flex-1 flex-col overflow-hidden",
-            geometry.mobile && !selected && "hidden",
+            geometry.mobile && !location.pull && "hidden",
           )}
         >
           {selected ? (
             <div className="flex min-h-0 flex-1 flex-col">
+              {!selectedEntry && (
+                <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
+                  This PR is outside the current filters. Your selection is retained.
+                </p>
+              )}
               <PullContent
                 key={selected.pull.id}
+                active={active}
+                hideRepositoryContext={Boolean(entityScope)}
                 owner={selected.pull.repo.split("/")[0]!}
                 name={selected.pull.repo.split("/")[1]!}
                 number={selected.pull.number}
                 tab={tab}
                 onTabChange={setTab}
                 onBack={() => {
-                  setSelectedId(null)
-                  requestAnimationFrame(() => search.current?.focus())
+                  location.update({
+                    pull: undefined,
+                    pullTab: undefined,
+                    run: undefined,
+                    job: undefined,
+                  })
+                  requestAnimationFrame(() => {
+                    const row = inboxPane.current?.querySelector<HTMLElement>(
+                      `[data-pull-id="${CSS.escape(selected.pull.id)}"] button`,
+                    )
+                    ;(row ?? search.current)?.focus()
+                  })
                 }}
                 backLabel="Back to inbox"
                 actions={
@@ -389,6 +507,26 @@ export function Inbox() {
                 }
               />
             </div>
+          ) : selectedOwner && selectedName && selectedNumber ? (
+            <PullContent
+              key={location.pull}
+              owner={selectedOwner}
+              name={selectedName}
+              number={Number(selectedNumber)}
+              tab={tab}
+              onTabChange={setTab}
+              active={active}
+              hideRepositoryContext={Boolean(entityScope)}
+              onBack={() =>
+                location.update({
+                  pull: undefined,
+                  pullTab: undefined,
+                  run: undefined,
+                  job: undefined,
+                })
+              }
+              backLabel="Back to inbox"
+            />
           ) : (
             <p className="m-auto max-w-sm p-6 text-center text-sm text-muted-foreground">
               Select a PR to review its conversation, files and checks.

@@ -4,46 +4,23 @@ import { Tabs, TabsList, TabsTrigger } from "@github-client/ui/components/tabs"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { useNavigate } from "@tanstack/react-router"
+import { useNavigate, useSearch } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
-import { type ReactNode, useEffect, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
-import { pullRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
 import { CheckSummary, CheckSummaryHelp } from "@/components/check-summary"
 import { RepositoryContext } from "@/components/repository-context"
 import { PullStateIcon } from "@/components/status"
 import { openExternal } from "@/platform"
-import { ChecksTab } from "./checks"
+import { RunDialog } from "../actions/run-dialog"
+import { ChecksContent, ChecksTab } from "./checks"
 import { ConversationTab } from "./conversation"
 import { FilesTab } from "./files"
 import { ReviewButton } from "./review"
 
 export type PullTab = "conversation" | "files" | "checks"
-
-export function PullPage() {
-  const { owner, repo: name, number: numberParam } = pullRoute.useParams()
-  const { tab } = pullRoute.useSearch()
-  const navigate = useNavigate()
-  return (
-    <PullContent
-      owner={owner}
-      name={name}
-      number={Number(numberParam)}
-      tab={tab}
-      onBack={() => window.history.back()}
-      onTabChange={(next) =>
-        void navigate({
-          to: "/pr/$owner/$repo/$number",
-          params: { owner, repo: name, number: numberParam },
-          search: { tab: next },
-          replace: true,
-        })
-      }
-    />
-  )
-}
 
 /** Shared detail pane for the full PR page and the inbox. */
 export function PullContent({
@@ -55,6 +32,8 @@ export function PullContent({
   onBack,
   actions,
   backLabel = "Back",
+  hideRepositoryContext = false,
+  active = true,
 }: {
   owner: string
   name: string
@@ -64,11 +43,14 @@ export function PullContent({
   onBack: () => void
   actions?: ReactNode
   backLabel?: string
+  hideRepositoryContext?: boolean
+  active?: boolean
 }) {
+  const navigate = useNavigate()
   const client = useClient()
   const repo = `${owner}/${name}`
   const key = prKey(repo, number)
-  useWatch((c) => c.watchPull(repo, number), [repo, number])
+  useWatch((c) => (active ? c.watchPull(repo, number) : () => {}), [repo, number, active])
   const status = useJobStatus(jobKeys.pull(repo, number))
   const error = status?.error
   useErrorToast(error, { id: `pull-error:${key}`, title: `Could not load ${repo} #${number}` })
@@ -78,8 +60,28 @@ export function PullContent({
     [key],
   ).data[0]
   const setTab = onTabChange
+  const search = useSearch({ strict: false }) as { run?: number; job?: number }
+  const selectedRun =
+    Number.isSafeInteger(search.run) && (search.run ?? 0) > 0 ? search.run : undefined
+  const paneRef = useRef<HTMLDivElement>(null)
+  const checksRailRef = useRef<HTMLElement>(null)
+  const [wide, setWide] = useState(false)
+  useEffect(() => {
+    const pane = paneRef.current
+    if (!pane) return
+    const observer = new ResizeObserver(([entry]) => setWide(entry.contentRect.width >= 1152))
+    observer.observe(pane)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    if (active && wide && tab === "checks") {
+      setTab("conversation")
+      requestAnimationFrame(() => checksRailRef.current?.focus())
+    }
+  }, [active, wide, tab, setTab])
   const [freshness, setFreshness] = useState(() => ({ online: navigator.onLine, now: Date.now() }))
   useEffect(() => {
+    if (!active) return
     const update = () => setFreshness({ online: navigator.onLine, now: Date.now() })
     const timer = window.setInterval(update, 30_000)
     window.addEventListener("online", update)
@@ -89,22 +91,46 @@ export function PullContent({
       window.removeEventListener("online", update)
       window.removeEventListener("offline", update)
     }
-  }, [])
+  }, [active])
   const stale = !status?.lastSuccess || freshness.now - status.lastSuccess > 3 * 60_000
 
-  useShortcuts({
-    Escape: onBack,
-    "1": () => setTab("conversation"),
-    "2": () => setTab("files"),
-    "3": () => setTab("checks"),
-    o: () => detail && void openExternal(detail.url),
-    r: () => void client.refresh(jobKeys.pull(repo, number)),
-  })
+  const selectRun = (run: number, job?: number) =>
+    void navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, run, job }),
+    })
+  const closeRun = () =>
+    void navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, run: undefined, job: undefined }),
+      replace: true,
+    })
+  const selectRunJob = (job: number) =>
+    void navigate({ to: ".", search: (previous) => ({ ...previous, job }), replace: true })
+
+  useShortcuts(
+    {
+      Escape: onBack,
+      "1": () => setTab("conversation"),
+      "2": () => setTab("files"),
+      "3": () => {
+        if (wide) {
+          setTab("conversation")
+          requestAnimationFrame(() => checksRailRef.current?.focus())
+        } else setTab("checks")
+      },
+      o: () => detail && void openExternal(detail.url),
+      r: () => void client.refresh(jobKeys.pull(repo, number)),
+    },
+    active && !selectedRun,
+  )
 
   return (
-    <div className="flex h-full min-w-0 flex-col">
-      <RepositoryContext owner={owner} repo={name} location={`#${number}`} />
-      <header className="flex shrink-0 flex-col gap-3 border-b px-4 pt-4 sm:px-6">
+    <div ref={paneRef} className="pull-pane-container flex h-full min-w-0 flex-col">
+      {!hideRepositoryContext && (
+        <RepositoryContext owner={owner} repo={name} location={`#${number}`} />
+      )}
+      <header className="pull-pane-header flex shrink-0 flex-col gap-3 border-b px-4 pt-4 sm:px-6">
         <div className="flex flex-wrap items-start gap-2">
           <Button variant="ghost" size="icon-sm" aria-label={backLabel} onClick={onBack}>
             <ArrowLeftIcon />
@@ -173,7 +199,7 @@ export function PullContent({
               <TabsTrigger className="flex-none" value="files">
                 Files {detail ? `(${detail.changedFiles})` : ""}
               </TabsTrigger>
-              <TabsTrigger className="flex-none" value="checks">
+              <TabsTrigger className={cn("flex-none", wide && "hidden")} value="checks">
                 <CheckSummary checks={detail?.checks} />
               </TabsTrigger>
             </TabsList>
@@ -187,10 +213,42 @@ export function PullContent({
         </p>
       ) : (
         <div className="pull-content-body min-h-0 flex-1">
-          {tab === "conversation" && <ConversationTab detail={detail} />}
-          {tab === "files" && <FilesTab detail={detail} />}
-          {tab === "checks" && <ChecksTab detail={detail} />}
+          {tab === "conversation" && (
+            <ConversationTab
+              detail={detail}
+              onRunSelect={selectRun}
+              checksRailRef={checksRailRef}
+            />
+          )}
+          {tab === "files" && (
+            <div className="pull-files-layout flex h-full min-w-0">
+              <div className="min-h-0 min-w-0 flex-1">
+                <FilesTab detail={detail} />
+              </div>
+              <aside
+                ref={checksRailRef}
+                className="pull-files-checks"
+                aria-label="Pull request checks"
+                tabIndex={-1}
+              >
+                <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
+                <ChecksContent detail={detail} onRunSelect={selectRun} />
+              </aside>
+            </div>
+          )}
+          {tab === "checks" && <ChecksTab detail={detail} onRunSelect={selectRun} />}
         </div>
+      )}
+      {active && selectedRun !== undefined && (
+        <RunDialog
+          open
+          owner={owner}
+          name={name}
+          runId={selectedRun}
+          job={search.job}
+          onJobChange={selectRunJob}
+          onBack={closeRun}
+        />
       )}
     </div>
   )

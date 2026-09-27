@@ -34,7 +34,8 @@ export function RepositoryContext({
       {location && <span className="text-muted-foreground">/ {location}</span>}
       <div className="ml-auto flex items-center gap-3">
         <Link
-          to="/actions/$owner/$repo"
+          to="/repo/$owner/$repo"
+          search={{ tab: "actions" }}
           params={{ owner, repo }}
           activeProps={{ className: "text-foreground font-medium", "aria-current": "page" }}
           className="text-muted-foreground hover:text-foreground"
@@ -43,7 +44,8 @@ export function RepositoryContext({
         </Link>
         {showSettings !== false && (
           <Link
-            to="/settings/$owner/$repo"
+            to="/repo/$owner/$repo"
+            search={{ tab: "settings" }}
             params={{ owner, repo }}
             activeProps={{ className: "text-foreground font-medium", "aria-current": "page" }}
             className="text-muted-foreground hover:text-foreground"

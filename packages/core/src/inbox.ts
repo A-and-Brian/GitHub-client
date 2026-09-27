@@ -72,6 +72,7 @@ export function deriveInboxPulls(
   preferences: readonly InboxPreference[],
   now: number,
   scope: "involving" | "all",
+  entityScope?: { groupId?: string; repo?: string },
 ): InboxPull[] {
   const currentLogin = login.trim().toLowerCase()
   const teamRequests = new Set(
@@ -82,6 +83,18 @@ export function deriveInboxPulls(
       ),
   )
   const involvingMe = new Set(pulls.filter((pull) => pull.groupId === "me").map((pull) => pull.id))
+  // Membership is established before collapsing copies; involvement still uses the full set.
+  const memberIds = entityScope
+    ? new Set(
+        pulls
+          .filter((pull) =>
+            entityScope.groupId
+              ? pull.groupId === entityScope.groupId
+              : pull.repo.toLowerCase() === entityScope.repo?.toLowerCase(),
+          )
+          .map((pull) => pull.id),
+      )
+    : null
   const byPull = new Map<string, PullRequest>()
   for (const pull of pulls) {
     const prior = byPull.get(pull.id)
@@ -95,6 +108,7 @@ export function deriveInboxPulls(
 
   return [...byPull.values()]
     .filter((pull) => {
+      if (memberIds && !memberIds.has(pull.id)) return false
       if (scope === "all") return true
       return (
         involvingMe.has(pull.id) ||

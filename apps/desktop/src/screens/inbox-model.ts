@@ -13,6 +13,7 @@ export function useInboxModel({
   selectedId,
   expanded,
   settledLimit,
+  entityScope,
 }: {
   pulls: PullRequest[]
   groups: Group[]
@@ -24,6 +25,7 @@ export function useInboxModel({
   selectedId: string | null
   expanded: { snoozed: boolean; settled: boolean }
   settledLimit: number
+  entityScope?: { groupId?: string; repo?: string }
 }) {
   const fullEntries = useMemo(
     () =>
@@ -35,9 +37,20 @@ export function useInboxModel({
       ),
     [pulls, groups, accountLogin, preferences],
   )
+  const groupId = entityScope?.groupId
+  const repo = entityScope?.repo
   const entries = useMemo(
-    () => deriveInboxPulls(pulls, groups, accountLogin, preferences, now, scope),
-    [pulls, groups, accountLogin, preferences, now, scope],
+    () =>
+      deriveInboxPulls(
+        pulls,
+        groups,
+        accountLogin,
+        preferences,
+        now,
+        scope,
+        groupId || repo ? { groupId, repo } : undefined,
+      ),
+    [pulls, groups, accountLogin, preferences, now, scope, groupId, repo],
   )
   const matching = entries.filter(({ pull }) =>
     `${pull.repo} #${pull.number} ${pull.title} ${pull.author ?? ""}`

@@ -4,17 +4,29 @@ import { ExternalLinkIcon } from "lucide-react"
 import { runState, StateIcon } from "@/components/status"
 import { openExternal } from "@/platform"
 
-export function ChecksTab({ detail }: { detail: PullRequestDetail }) {
+export function ChecksTab({
+  detail,
+  onRunSelect,
+}: {
+  detail: PullRequestDetail
+  onRunSelect?: (runId: number, jobId?: number) => void
+}) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
-        <ChecksContent detail={detail} />
+        <ChecksContent detail={detail} onRunSelect={onRunSelect} />
       </div>
     </div>
   )
 }
 
-export function ChecksContent({ detail }: { detail: PullRequestDetail }) {
+export function ChecksContent({
+  detail,
+  onRunSelect,
+}: {
+  detail: PullRequestDetail
+  onRunSelect?: (runId: number, jobId?: number) => void
+}) {
   const [owner, repo] = detail.repo.split("/") as [string, string]
   const groups = new Map<string, Check[]>()
   for (const check of detail.checks) {
@@ -45,6 +57,11 @@ export function ChecksContent({ detail }: { detail: PullRequestDetail }) {
                     search={{ job: jobIdFromUrl(check.url) }}
                     className="min-w-0 truncate hover:underline"
                     title={check.name}
+                    onClick={(event) => {
+                      if (!onRunSelect) return
+                      event.preventDefault()
+                      onRunSelect(check.workflowRunId!, jobIdFromUrl(check.url))
+                    }}
                   >
                     {check.name}
                   </Link>

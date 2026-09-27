@@ -121,8 +121,8 @@ test("home and scoped dashboards discover repositories without PRs and retain de
     /docs.*guide\.md/,
   )
   await page.getByRole("button", { name: "Pull requests", exact: true }).click()
-  await expect(page.getByText("No open pull requests.", { exact: true })).toBeVisible()
-  await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(0)
+  await expect(page.getByText("No active pull requests.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible()
   await page.goBack()
   await page.goBack()
   await expect(page.getByRole("heading", { name: "Backend", exact: true })).toBeVisible()
@@ -216,7 +216,9 @@ test("empty repositories are distinct from inaccessible contents", async ({ page
     }),
   )
   await page.reload()
-  await expect(page.getByRole("alert")).toContainText("Could not load repository contents")
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Could not load repository contents" }),
+  ).toBeVisible()
   await expect(page.getByText("This repository is empty and has no files yet.")).toHaveCount(0)
 })
 

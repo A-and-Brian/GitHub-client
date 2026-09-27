@@ -9,7 +9,7 @@ import { Button } from "@github-client/ui/components/button"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { Link } from "@tanstack/react-router"
+import { Link, useSearch } from "@tanstack/react-router"
 import {
   ArrowUpRightIcon,
   Building2Icon,
@@ -22,7 +22,9 @@ import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { ReviewBadge, rollupState, StateIcon } from "@/components/status"
 import { RelativeTime } from "@/components/time"
 
-type GroupTab = "overview" | "repositories"
+import { Inbox } from "./inbox"
+
+type GroupTab = "overview" | "repositories" | "pulls"
 
 export function HomeDashboard() {
   const { client } = useSession()
@@ -141,6 +143,7 @@ export function GroupDashboard({
   slug?: string
   tab?: GroupTab
 }) {
+  const routeSearch = useSearch({ strict: false })
   const groupId = slug ? `team:${org}/${slug}` : `org:${org}`
   const { client, viewer } = useSession()
   const group = useLiveQuery(
@@ -169,8 +172,8 @@ export function GroupDashboard({
   )
 
   return (
-    <div className="h-full overflow-y-auto">
-      <header className="border-b px-6 py-6 md:px-10">
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="shrink-0 border-b px-6 py-6 md:px-10">
         <div className="mx-auto max-w-5xl">
           <div className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
             <Link to="/" className="hover:text-foreground">
@@ -207,7 +210,7 @@ export function GroupDashboard({
             <Link
               to={slug ? "/team/$org/$slug" : "/org/$org"}
               params={slug ? { org, slug } : { org }}
-              search={{ tab: "overview" }}
+              search={{ ...routeSearch, tab: "overview" }}
               className={
                 tab === "overview"
                   ? "border-b-2 border-primary pb-2 font-medium"
@@ -219,7 +222,7 @@ export function GroupDashboard({
             <Link
               to={slug ? "/team/$org/$slug" : "/org/$org"}
               params={slug ? { org, slug } : { org }}
-              search={{ tab: "repositories" }}
+              search={{ ...routeSearch, tab: "repositories" }}
               className={
                 tab === "repositories"
                   ? "border-b-2 border-primary pb-2 font-medium"
@@ -229,63 +232,80 @@ export function GroupDashboard({
               Repositories
             </Link>
             <Link
-              to="/g/$groupId"
-              params={{ groupId }}
-              className="pb-2 text-muted-foreground hover:text-foreground"
+              to={slug ? "/team/$org/$slug" : "/org/$org"}
+              params={slug ? { org, slug } : { org }}
+              search={{ ...routeSearch, tab: "pulls" }}
+              className={
+                tab === "pulls"
+                  ? "border-b-2 border-primary pb-2 font-medium"
+                  : "pb-2 text-muted-foreground hover:text-foreground"
+              }
             >
               Pull requests
             </Link>
           </nav>
         </div>
       </header>
-      <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-10">
-        {tab === "repositories" ? (
-          <RepositoryCatalog key={`${viewer.login}:${groupId}`} scope={scope} />
-        ) : (
-          <>
-            {!slug && (
-              <section aria-labelledby="member-teams-heading">
-                <SectionHeading id="member-teams-heading" icon={<UsersIcon />} title="Your teams" />
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  {children.length ? (
-                    children.map((team) => (
-                      <Link
-                        key={team.id}
-                        to="/team/$org/$slug"
-                        params={{ org, slug: groupSlug(team) }}
-                        search={{ tab: "overview" }}
-                        className="rounded-lg border bg-card p-4 hover:bg-accent/40"
-                      >
-                        <span className="font-medium">{team.name.replace(`${org}/`, "")}</span>
-                        <p className="mt-1 text-sm text-muted-foreground">Team workspace</p>
-                      </Link>
-                    ))
-                  ) : (
-                    <p className="rounded-lg border p-4 text-sm text-muted-foreground">
-                      No visible member teams.
-                    </p>
-                  )}
-                </div>
+      <div hidden={tab !== "pulls"} className={tab === "pulls" ? "min-h-0 flex-1" : "hidden"}>
+        <Inbox entityScope={{ groupId }} active={tab === "pulls"} />
+      </div>
+      <div
+        hidden={tab === "pulls"}
+        className={tab === "pulls" ? "hidden" : "min-h-0 flex-1 overflow-y-auto"}
+      >
+        <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-10">
+          {tab === "repositories" ? (
+            <RepositoryCatalog key={`${viewer.login}:${groupId}`} scope={scope} />
+          ) : (
+            <>
+              {!slug && (
+                <section aria-labelledby="member-teams-heading">
+                  <SectionHeading
+                    id="member-teams-heading"
+                    icon={<UsersIcon />}
+                    title="Your teams"
+                  />
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {children.length ? (
+                      children.map((team) => (
+                        <Link
+                          key={team.id}
+                          to="/team/$org/$slug"
+                          params={{ org, slug: groupSlug(team) }}
+                          search={{ tab: "overview" }}
+                          className="rounded-lg border bg-card p-4 hover:bg-accent/40"
+                        >
+                          <span className="font-medium">{team.name.replace(`${org}/`, "")}</span>
+                          <p className="mt-1 text-sm text-muted-foreground">Team workspace</p>
+                        </Link>
+                      ))
+                    ) : (
+                      <p className="rounded-lg border p-4 text-sm text-muted-foreground">
+                        No visible member teams.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              )}
+              <section aria-labelledby="repositories-heading">
+                <SectionHeading
+                  id="repositories-heading"
+                  icon={<GitBranchIcon />}
+                  title="Repositories"
+                />
+                <RepositoryCatalog key={`${viewer.login}:${groupId}`} scope={scope} preview />
               </section>
-            )}
-            <section aria-labelledby="repositories-heading">
-              <SectionHeading
-                id="repositories-heading"
-                icon={<GitBranchIcon />}
-                title="Repositories"
+              <RecentPulls
+                pulls={pulls}
+                running={Boolean(sync?.running)}
+                error={Boolean(sync?.error)}
+                synced={sync?.lastSuccess !== undefined || pulls.length > 0}
+                lastSuccess={sync?.lastSuccess}
+                groupId={groupId}
               />
-              <RepositoryCatalog key={`${viewer.login}:${groupId}`} scope={scope} preview />
-            </section>
-            <RecentPulls
-              pulls={pulls}
-              running={Boolean(sync?.running)}
-              error={Boolean(sync?.error)}
-              synced={sync?.lastSuccess !== undefined || pulls.length > 0}
-              lastSuccess={sync?.lastSuccess}
-              groupId={groupId}
-            />
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -474,7 +494,7 @@ function RecentPulls({
       )}
       <div className="mt-3 divide-y rounded-lg border">
         {recent.map((pull) => (
-          <PullPreview key={pull.key} pull={pull} />
+          <PullPreview key={pull.key} pull={pull} groupId={groupId} />
         ))}
         {recent.length === 0 && (
           <p className="p-4 text-sm text-muted-foreground">
@@ -490,13 +510,14 @@ function RecentPulls({
   )
 }
 
-function PullPreview({ pull }: { pull: PullRequest }) {
-  const [owner, repo] = pull.repo.split("/")
+function PullPreview({ pull, groupId }: { pull: PullRequest; groupId: string }) {
+  const team = groupId.startsWith("team:")
+  const [org, slug] = groupId.replace(/^(org|team):/, "").split("/")
   return (
     <Link
-      to="/pr/$owner/$repo/$number"
-      params={{ owner: owner ?? "", repo: repo ?? "", number: String(pull.number) }}
-      search={{ tab: "conversation" }}
+      to={team ? "/team/$org/$slug" : "/org/$org"}
+      params={team ? { org: org!, slug: slug! } : { org: org! }}
+      search={{ tab: "pulls", pull: `${pull.repo}#${pull.number}` }}
       className="flex items-center gap-3 p-3 hover:bg-accent/40"
     >
       {rollupState(pull.checkState) && <StateIcon state={rollupState(pull.checkState)!} />}
