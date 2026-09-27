@@ -271,9 +271,9 @@ export function RepositoryBrowser({
             retry={() => retry("summary")}
           />
         ) : (
-          <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
-            <div className="mx-auto max-w-6xl space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-h-0 flex-1 flex-col px-6 py-5">
+            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-5">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <GitBranchIcon className="size-4 shrink-0 text-muted-foreground" />
                   <select
@@ -562,7 +562,7 @@ function FileContents({
           Open it on GitHub to inspect it.
         </p>
       ) : (
-        <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-5">
+        <pre className="overflow-auto p-4 text-xs leading-5">
           <code>{file.text}</code>
         </pre>
       )}
