@@ -27,6 +27,7 @@ import {
   wakeInboxPull as wakeInboxPullState,
 } from "./inbox"
 import type { Platform } from "./platform"
+import { RepositoryCache } from "./repository-cache"
 import { syncRunJobs, syncWorkflowRuns, syncWorkflows, toWorkflowRun } from "./sync/actions"
 import { syncGroups } from "./sync/groups"
 import { Poller } from "./sync/poller"
@@ -66,6 +67,7 @@ export class GitHubClient {
   readonly contributions: Contributions
   readonly poller: Poller
   readonly collections: Collections
+  readonly repositoryCache: RepositoryCache
   readonly platform: Platform
   private syncing = false
   private inboxQueue: Promise<unknown> = Promise.resolve()
@@ -80,6 +82,11 @@ export class GitHubClient {
     this.contributions = new Contributions(this.graphql)
     this.poller = new Poller(this.rest.rateLimits)
     this.collections = createCollections(platform.persistence)
+    this.repositoryCache = new RepositoryCache(
+      this.collections.repositoryResources,
+      Boolean(platform.persistence),
+      this.rest.rateLimits,
+    )
   }
 
   /** Validates `token` and stores it. Throws when GitHub rejects it. */
@@ -98,6 +105,7 @@ export class GitHubClient {
   async signOut(): Promise<void> {
     await this.enqueueInbox(async () => {
       this.poller.stop()
+      await this.repositoryCache.clearAll()
       await this.auth.signOut()
       this.contributions.reset()
       this.inboxUndoTokens.clear()

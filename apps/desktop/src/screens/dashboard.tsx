@@ -1,10 +1,6 @@
 import { type Group, jobKeys, type PullRequest } from "@github-client/core"
 import { GitHubError } from "@github-client/core/github/rest"
-import {
-  listRepositories,
-  type RepositoryScope,
-  type RepositorySummary,
-} from "@github-client/core/repositories"
+import type { RepositoryScope } from "@github-client/core/repositories"
 import { Button } from "@github-client/ui/components/button"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
@@ -17,8 +13,10 @@ import {
   LockKeyholeIcon,
   UsersIcon,
 } from "lucide-react"
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type ReactNode, useMemo } from "react"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
+import { useRepositoryPages } from "@/app/repository-cache"
+import { RepositoryCacheStatus } from "@/components/repository-cache-status"
 import { ReviewBadge, rollupState, StateIcon } from "@/components/status"
 import { RelativeTime } from "@/components/time"
 
@@ -298,72 +296,53 @@ function RepositoryCatalog({
   scope: RepositoryScope
   preview?: boolean
 }) {
-  const { client } = useSession()
-  const [items, setItems] = useState<RepositorySummary[]>([])
-  const [page, setPage] = useState(1)
-  const [hasMore, setHasMore] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<unknown>()
-  const [denied, setDenied] = useState(false)
-  const requestId = useRef(0)
-  const load = useCallback(
-    async (nextPage: number, replace = false) => {
-      const request = ++requestId.current
-      setLoading(true)
-      setError(undefined)
-      try {
-        const result = await listRepositories(client.rest, scope, nextPage)
-        if (request !== requestId.current) return
-        setDenied(false)
-        setItems((current) => {
-          const merged = replace ? result.items : [...current, ...result.items]
-          return [...new Map(merged.map((repo) => [repo.id, repo])).values()]
-        })
-        setPage(nextPage)
-        setHasMore(result.hasMore)
-      } catch (cause) {
-        if (request !== requestId.current) return
-        setError(cause)
-        if (cause instanceof GitHubError && [401, 403, 404].includes(cause.status)) {
-          setItems([])
-          setHasMore(false)
-          setDenied(true)
-        }
-      } finally {
-        if (request === requestId.current) setLoading(false)
-      }
-    },
-    [client, scope],
-  )
-  useEffect(() => {
-    requestId.current++
-    setItems([])
-    setPage(1)
-    setHasMore(false)
-    setDenied(false)
-    setError(undefined)
-    void load(1, true)
-    return () => {
-      requestId.current++
-    }
-  }, [load])
+  const { client, viewer } = useSession()
+  const catalog = useRepositoryPages({
+    kind: "catalog",
+    host: client.rest.url("/"),
+    accountLogin: viewer.login,
+    scope,
+    page: 1,
+    pageSize: 100,
+    query: scope.kind === "org" ? "type=all" : "",
+  })
+  const { state } = catalog
+  const items = state.data?.items ?? []
+  const hasMore = state.data?.hasMore ?? false
+  const loading = !state.loaded && !state.error
+  const error = state.error
   const shown = preview ? items.slice(0, 5) : items
+  const denied =
+    error instanceof GitHubError && [401, 403, 404].includes(error.status) && !error.rateLimited
   const unavailable = denied
     ? "This repository catalog is inaccessible for the current account."
-    : "Repositories could not be loaded. Try again."
+    : "Not saved for offline use. Repositories could not be loaded. Try again."
   return (
     <div className={preview ? "mt-3" : ""}>
-      {Boolean(error) && (
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <RepositoryCacheStatus states={[state]} />
+        {state.loaded && error && (
+          <Button size="sm" variant="ghost" onClick={() => void catalog.retry()}>
+            Retry
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={state.refreshing}
+          onClick={() => void catalog.refresh()}
+          aria-label="Refresh repositories"
+        >
+          Refresh
+        </Button>
+      </div>
+      {Boolean(error) && !state.loaded && (
         <div
           role="alert"
           className="mb-3 flex items-center justify-between gap-3 rounded-md border border-destructive/30 p-3 text-sm"
         >
           <span>{unavailable}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void load(items.length === 0 ? 1 : page + 1, items.length === 0)}
-          >
+          <Button size="sm" variant="outline" onClick={() => void catalog.retry()}>
             Retry
           </Button>
         </div>
@@ -400,12 +379,12 @@ function RepositoryCatalog({
         </div>
       ) : loading ? (
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">Loading repositories…</p>
-      ) : !error ? (
+      ) : state.loaded ? (
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">
           No repositories found.
         </p>
       ) : null}
-      {preview && !error ? (
+      {preview && (state.loaded || !error) ? (
         <Link
           to={scope.kind === "team" ? "/team/$org/$slug" : "/org/$org"}
           params={scope.kind === "team" ? { org: scope.org, slug: scope.slug } : { org: scope.org }}
@@ -417,8 +396,12 @@ function RepositoryCatalog({
       ) : null}
       {!preview && hasMore && (
         <div className="flex justify-center pt-4">
-          <Button variant="outline" disabled={loading} onClick={() => void load(page + 1)}>
-            {loading ? "Loading…" : "Load more"}
+          <Button
+            variant="outline"
+            disabled={state.refreshing}
+            onClick={() => void catalog.loadMore()}
+          >
+            {state.refreshing ? "Loading…" : "Load more"}
           </Button>
         </div>
       )}

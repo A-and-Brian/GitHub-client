@@ -26,4 +26,11 @@ export type {
 export * from "./logs/parse"
 export * from "./logs/view"
 export type { Platform, SecretStore } from "./platform"
+export type {
+  RepositoryResourceHandle,
+  RepositoryResourceKey,
+  RepositoryResourceRow,
+  RepositoryResourceSnapshot,
+} from "./repository-cache"
+export { RepositoryCache, repositoryResourceKey } from "./repository-cache"
 export type { JobStatus } from "./sync/poller"
