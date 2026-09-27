@@ -28,7 +28,9 @@ test("sign in, see groups and pull requests, open a pull request", async ({ page
   await page.getByLabel("Personal access token").fill("ghp_test")
   await page.getByRole("button", { name: "Sign in" }).click()
 
-  await expect(page.getByRole("link", { name: /acme/ })).toBeVisible()
+  await expect(
+    page.getByRole("complementary").getByRole("link", { name: "acme", exact: true }),
+  ).toBeVisible()
   await page.getByRole("link", { name: "Involving me", exact: true }).click()
   await expect(page.getByText("Speed up the diff view")).toBeVisible()
 
@@ -49,7 +51,7 @@ test("sign in, see groups and pull requests, open a pull request", async ({ page
 test("the command palette opens a pull request", async ({ page }) => {
   await fakeGitHub(page)
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
-  await page.goto("/")
+  await page.goto("/#/inbox")
   await expect(page.getByText("Speed up the diff view")).toBeVisible()
 
   await page.keyboard.press("Control+k")

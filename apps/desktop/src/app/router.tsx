@@ -3,14 +3,16 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
 } from "@tanstack/react-router"
+import { useSession } from "@/app/client"
 import { RunPage } from "@/screens/actions/run"
 import { RunsPage } from "@/screens/actions/runs"
+import { GroupDashboard, HomeDashboard } from "@/screens/dashboard"
 import { GroupPulls } from "@/screens/group-pulls"
 import { Inbox } from "@/screens/inbox"
 import { Layout } from "@/screens/layout"
 import { PullPage, type PullTab } from "@/screens/pull/pull-page"
+import { RepositoryBrowser } from "@/screens/repository"
 import { RepositorySettings } from "@/screens/repository-settings"
 
 const rootRoute = createRootRoute({ component: Layout })
@@ -18,8 +20,65 @@ const rootRoute = createRootRoute({ component: Layout })
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/inbox" })
+  component: HomeDashboard,
+})
+
+const dashboardSearch = (
+  search: Record<string, unknown>,
+): { tab: "overview" | "repositories" } => ({
+  tab: search.tab === "repositories" ? "repositories" : "overview",
+})
+
+export const orgRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/org/$org",
+  validateSearch: dashboardSearch,
+  component: function OrganizationRoute() {
+    const { org } = orgRoute.useParams()
+    const { tab } = orgRoute.useSearch()
+    const { viewer } = useSession()
+    return <GroupDashboard key={`${viewer.login}:org:${org}`} org={org} tab={tab} />
+  },
+})
+
+export const teamRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/team/$org/$slug",
+  validateSearch: dashboardSearch,
+  component: function TeamRoute() {
+    const { org, slug } = teamRoute.useParams()
+    const { tab } = teamRoute.useSearch()
+    const { viewer } = useSession()
+    return (
+      <GroupDashboard key={`${viewer.login}:team:${org}/${slug}`} org={org} slug={slug} tab={tab} />
+    )
+  },
+})
+
+export const repositoryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/repo/$owner/$repo",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { ref?: string; path?: string; tab: "code" | "pulls" } => ({
+    ref: typeof search.ref === "string" ? search.ref : undefined,
+    path: typeof search.path === "string" ? search.path : undefined,
+    tab: search.tab === "pulls" ? "pulls" : "code",
+  }),
+  component: function RepositoryRoute() {
+    const { owner, repo } = repositoryRoute.useParams()
+    const { ref, path, tab } = repositoryRoute.useSearch()
+    const { viewer } = useSession()
+    return (
+      <RepositoryBrowser
+        key={`${viewer.login}:${owner}/${repo}`}
+        owner={owner}
+        repo={repo}
+        refName={ref}
+        path={path ?? ""}
+        tab={tab}
+      />
+    )
   },
 })
 
@@ -71,6 +130,9 @@ export const runRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  orgRoute,
+  teamRoute,
+  repositoryRoute,
   inboxRoute,
   repoSettingsRoute,
   groupRoute,

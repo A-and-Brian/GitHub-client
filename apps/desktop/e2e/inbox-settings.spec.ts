@@ -3,7 +3,7 @@ import { fakeGitHub } from "./fake-github"
 
 async function signIn(page: import("@playwright/test").Page) {
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
-  await page.goto("/")
+  await page.goto("/#/inbox")
   await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
 }
 
@@ -15,6 +15,11 @@ test("nested teams retain repository context and open settings", async ({ page }
   await expect(page.getByRole("link", { name: "Backend", exact: true })).toBeHidden()
   await page.getByRole("button", { name: "Expand acme/Engineering", exact: true }).click()
   await page.getByRole("link", { name: "Backend", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Backend", exact: true })).toBeVisible()
+  await page
+    .getByRole("navigation", { name: "Backend navigation" })
+    .getByRole("link", { name: "Pull requests", exact: true })
+    .click()
   await expect(page.getByRole("heading", { name: "acme/api", exact: true })).toBeVisible()
   await page.getByRole("link", { name: "Settings", exact: true }).click()
   await expect(page.getByLabel("Description", { exact: true })).toHaveValue("API service")

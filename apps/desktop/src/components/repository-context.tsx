@@ -1,14 +1,16 @@
 import { Link } from "@tanstack/react-router"
 
-/** The repository has Actions and Settings routes, but no overview route. */
+/** Shared entry points for repository pages and standalone PR details. */
 export function RepositoryContext({
   owner,
   repo,
   location,
+  showSettings,
 }: {
   owner: string
   repo: string
   location?: string
+  showSettings?: boolean
 }) {
   return (
     <nav
@@ -21,9 +23,14 @@ export function RepositoryContext({
       <span aria-hidden="true" className="text-muted-foreground">
         /
       </span>
-      <span className="min-w-0 break-all font-medium">
+      <Link
+        to="/repo/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ tab: "code" }}
+        className="min-w-0 break-all font-medium hover:underline"
+      >
         {owner}/{repo}
-      </span>
+      </Link>
       {location && <span className="text-muted-foreground">/ {location}</span>}
       <div className="ml-auto flex items-center gap-3">
         <Link
@@ -34,14 +41,16 @@ export function RepositoryContext({
         >
           Actions
         </Link>
-        <Link
-          to="/settings/$owner/$repo"
-          params={{ owner, repo }}
-          activeProps={{ className: "text-foreground font-medium", "aria-current": "page" }}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          Settings
-        </Link>
+        {showSettings !== false && (
+          <Link
+            to="/settings/$owner/$repo"
+            params={{ owner, repo }}
+            activeProps={{ className: "text-foreground font-medium", "aria-current": "page" }}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Settings
+          </Link>
+        )}
       </div>
     </nav>
   )
