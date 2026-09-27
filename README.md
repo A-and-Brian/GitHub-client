@@ -2,6 +2,8 @@
 
 A fast, keyboard-first desktop client for GitHub. It keeps pull requests, reviews, and Actions in a local SQLite cache, so screens open instantly and refresh in the background.
 
+Repository: [Yis-company/GitHub-client](https://github.com/Yis-company/GitHub-client)
+
 Status: v1 in development. See `.claude/plans/` for the product plan and the v1 implementation plan.
 
 ## Features (v1)
