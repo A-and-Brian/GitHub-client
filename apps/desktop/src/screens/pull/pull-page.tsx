@@ -4,11 +4,15 @@ import { Tabs, TabsList, TabsTrigger } from "@github-client/ui/components/tabs"
 import { cn } from "@github-client/ui/lib/utils"
 import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
-import { Link, useNavigate } from "@tanstack/react-router"
+import { useNavigate } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
+import { type ReactNode, useEffect, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { pullRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
+import { CheckSummary, CheckSummaryHelp } from "@/components/check-summary"
+import { RepositoryContext } from "@/components/repository-context"
 import { PullStateIcon } from "@/components/status"
 import { openExternal } from "@/platform"
 import { ChecksTab } from "./checks"
@@ -49,6 +53,8 @@ export function PullContent({
   tab,
   onTabChange,
   onBack,
+  actions,
+  backLabel = "Back",
 }: {
   owner: string
   name: string
@@ -56,18 +62,35 @@ export function PullContent({
   tab: PullTab
   onTabChange: (tab: PullTab) => void
   onBack: () => void
+  actions?: ReactNode
+  backLabel?: string
 }) {
   const client = useClient()
   const repo = `${owner}/${name}`
   const key = prKey(repo, number)
   useWatch((c) => c.watchPull(repo, number), [repo, number])
   const status = useJobStatus(jobKeys.pull(repo, number))
+  const error = status?.error
+  useErrorToast(error, { id: `pull-error:${key}`, title: `Could not load ${repo} #${number}` })
   const detail = useLiveQuery(
     (q) =>
       q.from({ d: client.collections.pullDetails.collection }).where(({ d }) => eq(d.key, key)),
     [key],
   ).data[0]
   const setTab = onTabChange
+  const [freshness, setFreshness] = useState(() => ({ online: navigator.onLine, now: Date.now() }))
+  useEffect(() => {
+    const update = () => setFreshness({ online: navigator.onLine, now: Date.now() })
+    const timer = window.setInterval(update, 30_000)
+    window.addEventListener("online", update)
+    window.addEventListener("offline", update)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener("online", update)
+      window.removeEventListener("offline", update)
+    }
+  }, [])
+  const stale = !status?.lastSuccess || freshness.now - status.lastSuccess > 3 * 60_000
 
   useShortcuts({
     Escape: onBack,
@@ -80,81 +103,87 @@ export function PullContent({
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <header className="flex flex-col gap-2 border-b px-4 pt-3">
+      <RepositoryContext owner={owner} repo={name} location={`#${number}`} />
+      <header className="flex shrink-0 flex-col gap-3 border-b px-4 pt-4 sm:px-6">
         <div className="flex flex-wrap items-start gap-2">
-          <Button variant="ghost" size="icon-sm" aria-label="Back" onClick={onBack}>
+          <Button variant="ghost" size="icon-sm" aria-label={backLabel} onClick={onBack}>
             <ArrowLeftIcon />
           </Button>
           {detail && (
             <PullStateIcon state={detail.state} isDraft={detail.isDraft} className="mt-1.5" />
           )}
-          <div className="min-w-0 flex-1">
-            <div className="mb-1 flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-semibold break-all">
-                {repo} #{number}
-              </span>
-              <Link
-                to="/settings/$owner/$repo"
-                params={{ owner, repo: name }}
-                className="text-xs text-muted-foreground underline"
-              >
-                Repository settings
-              </Link>
-            </div>
-            <h1 className="text-base font-semibold leading-snug">
-              {detail?.title ?? `${repo}#${number}`}{" "}
-              <span className="font-normal text-muted-foreground">#{number}</span>
+          <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] sm:basis-0">
+            <h1 className="break-words text-lg font-semibold leading-snug">
+              {detail?.title ?? "Loading pull request…"}
             </h1>
             {detail && (
               <p className="text-xs text-muted-foreground">
                 {detail.author?.login} wants to merge <code>{detail.headRef}</code> into{" "}
-                <code>{detail.baseRef}</code> · {repo} ·{" "}
+                <code>{detail.baseRef}</code> ·{" "}
                 <span className="text-success">+{detail.additions}</span>{" "}
                 <span className="text-destructive">−{detail.deletions}</span>
               </p>
             )}
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Refresh"
-            onClick={() => void client.refresh(jobKeys.pull(repo, number))}
-          >
-            <RefreshCwIcon className={cn(status?.running && "animate-spin")} />
-          </Button>
-          {detail && (
+          <div className="ml-auto flex items-center gap-2">
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Open on GitHub"
-              onClick={() => openExternal(detail.url)}
+              aria-label="Refresh"
+              onClick={() => void client.refresh(jobKeys.pull(repo, number))}
             >
-              <ExternalLinkIcon />
+              <RefreshCwIcon className={cn(status?.running && "animate-spin")} />
             </Button>
-          )}
-          {detail && detail.state === "OPEN" && <ReviewButton detail={detail} />}
+            {detail && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Open on GitHub"
+                onClick={() => openExternal(detail.url)}
+              >
+                <ExternalLinkIcon />
+              </Button>
+            )}
+            {detail && detail.state === "OPEN" && <ReviewButton detail={detail} />}
+          </div>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as PullTab)}>
-          <TabsList variant="line">
-            <TabsTrigger value="conversation">Conversation</TabsTrigger>
-            <TabsTrigger value="files">
-              Files {detail ? `(${detail.changedFiles})` : ""}
-            </TabsTrigger>
-            <TabsTrigger value="checks">
-              Checks {detail ? `(${detail.checks.length})` : ""}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        {actions}
+        {!freshness.online || stale || status?.error ? (
+          <p className="text-xs text-muted-foreground">
+            {!freshness.online
+              ? "Offline · "
+              : status?.error
+                ? "Sync failed · "
+                : "Awaiting refresh · "}
+            {detail ? "Showing cached pull request and checks." : "Checks are not loaded yet."}
+          </p>
+        ) : null}
+        <div className="flex min-w-0 items-center gap-1">
+          <Tabs className="min-w-0 flex-1" value={tab} onValueChange={(v) => setTab(v as PullTab)}>
+            <TabsList
+              variant="line"
+              className="max-w-full flex-wrap justify-start gap-y-3 group-data-horizontal/tabs:h-auto"
+            >
+              <TabsTrigger className="flex-none" value="conversation">
+                Conversation
+              </TabsTrigger>
+              <TabsTrigger className="flex-none" value="files">
+                Files {detail ? `(${detail.changedFiles})` : ""}
+              </TabsTrigger>
+              <TabsTrigger className="flex-none" value="checks">
+                <CheckSummary checks={detail?.checks} />
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <CheckSummaryHelp checks={detail?.checks} />
+        </div>
       </header>
-      {status?.error ? (
-        <p className="p-6 text-sm text-destructive">
-          Could not load: {String((status.error as Error).message ?? status.error)}
-        </p>
-      ) : null}
       {!detail ? (
-        <p className="p-6 text-sm text-muted-foreground">Loading…</p>
+        <p className="p-6 text-sm text-muted-foreground">
+          {error != null ? "Pull request unavailable. Use Refresh to try again." : "Loading…"}
+        </p>
       ) : (
-        <div className="min-h-0 flex-1">
+        <div className="pull-content-body min-h-0 flex-1">
           {tab === "conversation" && <ConversationTab detail={detail} />}
           {tab === "files" && <FilesTab detail={detail} />}
           {tab === "checks" && <ChecksTab detail={detail} />}

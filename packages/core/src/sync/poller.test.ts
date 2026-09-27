@@ -92,3 +92,31 @@ test("jobs wait while their rate limit is exhausted", async () => {
   expect(run).not.toHaveBeenCalled()
   poller.stop()
 })
+
+test("refresh requested during a run gets a fresh pass after it", async () => {
+  const poller = new Poller(new RateLimits())
+  const { run, job: j } = job()
+  let releaseFirst!: () => void
+  let releaseSecond!: () => void
+  run
+    .mockImplementationOnce(
+      () => new Promise<undefined>((resolve) => (releaseFirst = () => resolve(undefined))),
+    )
+    .mockImplementationOnce(
+      () => new Promise<undefined>((resolve) => (releaseSecond = () => resolve(undefined))),
+    )
+  poller.watch(j)
+
+  const first = poller.refresh("k")
+  const refreshes = Promise.all([poller.refresh("k"), poller.refresh("k")])
+  expect(run).toHaveBeenCalledTimes(1)
+
+  releaseFirst()
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+  const nextRefresh = poller.refresh("k")
+  releaseSecond()
+  await Promise.all([first, refreshes, nextRefresh])
+  expect(run).toHaveBeenCalledTimes(3)
+
+  poller.stop()
+})

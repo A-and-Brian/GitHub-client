@@ -16,8 +16,10 @@ import { useNavigate } from "@tanstack/react-router"
 import { ExternalLinkIcon, PlayIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { runsRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
+import { RepositoryContext } from "@/components/repository-context"
 import { type RunState, runState, StateIcon } from "@/components/status"
 import { duration, RelativeTime } from "@/components/time"
 import { openExternal } from "@/platform"
@@ -49,6 +51,15 @@ export function RunsPage() {
   useWatch((c) => c.watchRuns(repo), [repo])
   useWatch((c) => c.watchWorkflows(repo), [repo])
   const sync = useJobStatus(jobKeys.runs(repo))
+  const workflowsSync = useJobStatus(jobKeys.workflows(repo))
+  useErrorToast(sync?.error, {
+    id: `actions-runs-error:${repo}`,
+    title: `Could not refresh ${repo} workflow runs`,
+  })
+  useErrorToast(workflowsSync?.error, {
+    id: `actions-workflows-error:${repo}`,
+    title: `Could not refresh ${repo} workflows`,
+  })
   const runs = useLiveQuery(
     (q) =>
       q
@@ -113,11 +124,10 @@ export function RunsPage() {
     id === ALL_WORKFLOWS ? "All workflows" : workflows.find((w) => String(w.id) === id)?.name
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2">
-        <h1 className="truncate font-semibold">
-          {repo} <span className="font-normal text-muted-foreground">· Actions</span>
-        </h1>
+    <div className="flex h-full min-w-0 flex-col">
+      <RepositoryContext owner={owner} repo={name} location="Actions" />
+      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
+        <h1 className="truncate font-semibold">Workflow runs</h1>
         <Tabs value={status} onValueChange={(v) => setStatus(v as StatusFilter)}>
           <TabsList>
             <TabsTrigger value="all">All</TabsTrigger>
@@ -164,11 +174,6 @@ export function RunsPage() {
           <ExternalLinkIcon />
         </Button>
       </header>
-      {sync?.error ? (
-        <p className="border-b bg-destructive/10 px-4 py-1.5 text-xs text-destructive">
-          Sync failed: {String((sync.error as Error).message ?? sync.error)}
-        </p>
-      ) : null}
       <ul className="flex-1 overflow-y-auto">
         {visible.map((run, index) => (
           <RunRow
@@ -182,7 +187,11 @@ export function RunsPage() {
         ))}
         {visible.length === 0 && (
           <li className="p-8 text-center text-sm text-muted-foreground">
-            {sync?.lastSuccess || runs.length > 0 ? "No matching runs." : "Loading runs…"}
+            {sync?.error && sync.lastSuccess === undefined && runs.length === 0
+              ? "Could not load workflow runs. Use Refresh to try again."
+              : sync?.lastSuccess || runs.length > 0
+                ? "No matching runs."
+                : "Loading runs…"}
           </li>
         )}
       </ul>

@@ -13,6 +13,8 @@
     "windows": [
       {
         "title": "GitHub-client",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "width": 1400,
         "height": 900,
         "resizable": true,
@@ -40,6 +42,18 @@
     },
     "macOS": {
       "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyRUJCNTdBNTgxQjM3MTUKUldRVk54dFllclhyRW02ZmFKclR2VjNTY3BoM0p3alpjZVRESktxT2RFZmdyQmQxOFh0dmwvRGwK",
+      "endpoints": [
+        "https://github.com/Yis-company/GitHub-client/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

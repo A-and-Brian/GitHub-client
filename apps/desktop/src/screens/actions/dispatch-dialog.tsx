@@ -29,12 +29,13 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { useClient } from "@/app/client"
+import { showError, useErrorToast } from "@/app/errors"
 
 type Inputs =
   | { status: "loading" }
   | { status: "ready"; inputs: DispatchInput[] }
   | { status: "no-trigger" }
-  | { status: "error"; message: string }
+  | { status: "error"; error: unknown; path: string; branch: string }
 
 export function DispatchDialog({
   repo,
@@ -63,6 +64,23 @@ export function DispatchDialog({
   const [values, setValues] = useState<DispatchValues>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  const workflow = candidates.find((w) => w.id === workflowId)
+  const path = workflow?.path
+  const branch = ref.trim()
+  const setOpen = (next: boolean) => {
+    if (!next) setInputs({ status: "loading" })
+    onOpenChange(next)
+  }
+
+  useErrorToast(
+    open && inputs.status === "error" && inputs.path === path && inputs.branch === branch
+      ? inputs.error
+      : undefined,
+    {
+      id: `actions-dispatch-inputs-error:${repo}:${path ?? "workflow"}:${branch}`,
+      title: "Could not read workflow inputs",
+    },
+  )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form each time the dialog opens
   useEffect(() => {
@@ -71,10 +89,6 @@ export function DispatchDialog({
     setRef(defaultBranch ?? "main")
     setErrors({})
   }, [open])
-
-  const workflow = candidates.find((w) => w.id === workflowId)
-  const path = workflow?.path
-  const branch = ref.trim()
 
   useEffect(() => {
     if (!open || !path || !branch) return
@@ -92,11 +106,7 @@ export function DispatchDialog({
         },
         (e) => {
           if (cancelled) return
-          const message = e instanceof Error ? e.message : String(e)
-          setInputs({
-            status: "error",
-            message: `Could not read ${path} at ${branch}: ${message}`,
-          })
+          setInputs({ status: "error", error: e, path, branch })
         },
       )
     }, 400)
@@ -116,16 +126,16 @@ export function DispatchDialog({
     try {
       await client.dispatchWorkflow(repo, workflow.id, branch, payload.inputs)
       toast.success(`Started "${workflow.name}" on ${branch}. The run appears in a few seconds.`)
-      onOpenChange(false)
+      setOpen(false)
     } catch (e) {
-      toast.error(`Dispatch failed: ${e instanceof Error ? e.message : e}`)
+      showError("Dispatch failed", e)
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Run workflow</DialogTitle>
@@ -171,7 +181,10 @@ export function DispatchDialog({
                 <code>{branch}</code>, so it cannot be run manually.
               </p>
             ) : inputs.status === "error" ? (
-              <p className="text-sm text-destructive">{inputs.message}</p>
+              <p className="text-sm text-muted-foreground">
+                Could not read the workflow file at this branch. Check the branch or workflow path,
+                then try again.
+              </p>
             ) : (
               inputs.inputs.map((input) => (
                 <InputField

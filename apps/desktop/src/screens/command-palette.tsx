@@ -10,7 +10,9 @@ import {
 import { useLiveQuery } from "@tanstack/react-db"
 import { useNavigate } from "@tanstack/react-router"
 import { useClient } from "@/app/client"
+import { checkForUpdates } from "@/app/updates"
 import { useTheme } from "@/components/theme-provider"
+import { isDesktop } from "@/platform"
 
 const MAX_PULLS = 200
 
@@ -129,19 +131,50 @@ export function CommandPalette({
               )
             })}
           </CommandGroup>
-          <CommandGroup heading="Commands">
+          <CommandGroup heading="Theme">
             <CommandItem
-              value="toggle theme dark light"
-              onSelect={() => run(() => setTheme(theme === "dark" ? "light" : "dark"))}
+              value={`use system theme${theme === "system" ? " current" : ""}`}
+              onSelect={() => run(() => setTheme("system"))}
             >
-              Toggle dark mode
+              Use system theme
+              {theme === "system" && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
             </CommandItem>
+            <CommandItem
+              value={`use light theme${theme === "light" ? " current" : ""}`}
+              onSelect={() => run(() => setTheme("light"))}
+            >
+              Use light theme
+              {theme === "light" && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
+            </CommandItem>
+            <CommandItem
+              value={`use dark theme${theme === "dark" ? " current" : ""}`}
+              onSelect={() => run(() => setTheme("dark"))}
+            >
+              Use dark theme
+              {theme === "dark" && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
+            </CommandItem>
+          </CommandGroup>
+          <CommandGroup heading="Commands">
             <CommandItem
               value="refresh groups sync"
               onSelect={() => run(() => void client.refresh("groups"))}
             >
               Refresh groups
             </CommandItem>
+            {isDesktop && (
+              <CommandItem
+                value="check for updates upgrade version install"
+                onSelect={() => run(() => void checkForUpdates({ manual: true }))}
+              >
+                Check for updates
+              </CommandItem>
+            )}
           </CommandGroup>
         </CommandList>
       </Command>

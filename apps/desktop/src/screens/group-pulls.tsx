@@ -9,6 +9,7 @@ import { Link, useNavigate } from "@tanstack/react-router"
 import { MessageSquareIcon, RefreshCwIcon } from "lucide-react"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useClient, useJobStatus, useSession, useWatch } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { groupRoute } from "@/app/router"
 import { useShortcuts } from "@/app/shortcuts"
 import { UserAvatar } from "@/components/avatar"
@@ -33,6 +34,10 @@ export function GroupPulls() {
     (q) => q.from({ g: client.collections.groups.collection }).where(({ g }) => eq(g.id, groupId)),
     [groupId],
   ).data[0]
+  useErrorToast(status?.error, {
+    id: `group-pulls-error:${groupId}`,
+    title: `Could not refresh pull requests for ${groupId}`,
+  })
   const pulls = useLiveQuery(
     (q) =>
       q
@@ -124,8 +129,8 @@ export function GroupPulls() {
         </Button>
       </header>
       {status?.error ? (
-        <p className="border-b bg-destructive/10 px-4 py-1.5 text-xs text-destructive">
-          Sync failed: {String((status.error as Error).message ?? status.error)}
+        <p className="border-b px-4 py-1.5 text-xs text-muted-foreground">
+          Pull requests may be out of date. Use Refresh to try again.
         </p>
       ) : null}
       <ul className="flex-1 overflow-y-auto">
@@ -134,13 +139,22 @@ export function GroupPulls() {
             {(index === 0 || visible[index - 1]?.repo !== pull.repo) && (
               <li className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-muted px-4 py-2 text-sm">
                 <h2 className="font-semibold break-all">{pull.repo}</h2>
-                <Link
-                  to="/settings/$owner/$repo"
-                  params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
-                  className="shrink-0 text-xs underline"
-                >
-                  Settings
-                </Link>
+                <div className="flex shrink-0 items-center gap-3 text-xs">
+                  <Link
+                    to="/actions/$owner/$repo"
+                    params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    Actions
+                  </Link>
+                  <Link
+                    to="/settings/$owner/$repo"
+                    params={{ owner: pull.repo.split("/")[0]!, repo: pull.repo.split("/")[1]! }}
+                    className="shrink-0 text-xs underline"
+                  >
+                    Settings
+                  </Link>
+                </div>
               </li>
             )}
             <PullRow
@@ -148,15 +162,18 @@ export function GroupPulls() {
               index={index}
               selected={index === selected}
               onSelect={() => setSelected(index)}
+              onPointerEnter={() => void client.prefetchPull(pull.repo, pull.number)}
               onOpen={() => open(pull)}
             />
           </Fragment>
         ))}
         {visible.length === 0 && (
           <li className="p-8 text-center text-sm text-muted-foreground">
-            {group && (status?.lastSuccess || pulls.length > 0)
-              ? "No open pull requests."
-              : "Loading pull requests…"}
+            {status?.error && pulls.length === 0
+              ? "Pull requests unavailable. Use Refresh to try again."
+              : group && (status?.lastSuccess || pulls.length > 0)
+                ? "No open pull requests."
+                : "Loading pull requests…"}
           </li>
         )}
       </ul>
@@ -178,12 +195,14 @@ function PullRow({
   index,
   selected,
   onSelect,
+  onPointerEnter,
   onOpen,
 }: {
   pull: PullRequest
   index: number
   selected: boolean
   onSelect: () => void
+  onPointerEnter: () => void
   onOpen: () => void
 }) {
   const ci = rollupState(pull.checkState)
@@ -196,6 +215,7 @@ function PullRow({
         selected ? "bg-accent" : "hover:bg-accent/50",
       )}
       onMouseMove={onSelect}
+      onPointerEnter={onPointerEnter}
       onClick={onOpen}
     >
       <span className="w-4">{ci && <StateIcon state={ci} />}</span>
@@ -230,7 +250,7 @@ function PullRow({
         )}
       </span>
       <UserAvatar src={pull.authorAvatarUrl} login={pull.author} />
-      <span className="w-16 text-right text-xs text-muted-foreground">
+      <span className="min-w-16 shrink-0 text-right text-xs text-muted-foreground">
         <RelativeTime iso={pull.updatedAt} />
       </span>
     </li>

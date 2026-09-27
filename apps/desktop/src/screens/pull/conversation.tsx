@@ -11,13 +11,15 @@ import {
 import { Textarea } from "@github-client/ui/components/textarea"
 import { Link } from "@tanstack/react-router"
 import { GitCommitHorizontalIcon, MessageSquareIcon } from "lucide-react"
-import { useState } from "react"
+import { useId, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useClient } from "@/app/client"
+import { showError } from "@/app/errors"
 import { UserAvatar } from "@/components/avatar"
 import { GitHubHtml } from "@/components/github-html"
 import { ReviewBadge } from "@/components/status"
 import { RelativeTime } from "@/components/time"
+import { ChecksContent } from "./checks"
 
 const REVIEW_TEXT: Record<string, string> = {
   APPROVED: "approved these changes",
@@ -31,42 +33,50 @@ export function ConversationTab({ detail }: { detail: PullRequestDetail }) {
   const [owner, repo] = detail.repo.split("/") as [string, string]
   const unresolved = detail.threads.filter((t) => !t.isResolved)
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
-        <Card author={detail.author} createdAt={detail.createdAt} verb="opened this pull request">
-          <GitHubHtml html={detail.bodyHTML} />
-        </Card>
-        {detail.timeline.map((item) => (
-          <TimelineEntry key={item.id} item={item} />
-        ))}
-        {unresolved.length > 0 && (
-          <section className="rounded-lg border p-3 text-sm">
-            <h2 className="mb-2 font-medium">
-              {unresolved.length} unresolved review thread{unresolved.length === 1 ? "" : "s"}
-            </h2>
-            <ul className="flex flex-col gap-1">
-              {unresolved.map((t) => (
-                <li key={t.id}>
-                  <Link
-                    to="/pr/$owner/$repo/$number"
-                    params={{ owner, repo, number: String(detail.number) }}
-                    search={{ tab: "files" }}
-                    hash={`thread-${t.id}`}
-                    className="flex gap-2 hover:underline"
-                  >
-                    <code className="shrink-0 text-xs">
-                      {t.path}
-                      {t.line ? `:${t.line}` : " (outdated)"}
-                    </code>
-                    <span className="truncate text-muted-foreground">{t.comments[0]?.body}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {detail.state === "OPEN" && <MergeBox detail={detail} />}
-        <CommentBox detail={detail} />
+    <div className="pull-conversation-scroll h-full overflow-y-auto">
+      <div className="pull-conversation-layout mx-auto flex max-w-3xl flex-col gap-4 p-4">
+        <div className="pull-conversation-main flex min-w-0 flex-col gap-4">
+          <Card author={detail.author} createdAt={detail.createdAt} verb="opened this pull request">
+            <GitHubHtml html={detail.bodyHTML} />
+          </Card>
+          {detail.timeline.map((item) => (
+            <TimelineEntry key={item.id} item={item} />
+          ))}
+          {unresolved.length > 0 && (
+            <section className="rounded-lg border p-3 text-sm">
+              <h2 className="mb-2 font-medium">
+                {unresolved.length} unresolved review thread{unresolved.length === 1 ? "" : "s"}
+              </h2>
+              <ul className="flex flex-col gap-1">
+                {unresolved.map((t) => (
+                  <li key={t.id}>
+                    <Link
+                      to="/pr/$owner/$repo/$number"
+                      params={{ owner, repo, number: String(detail.number) }}
+                      search={{ tab: "files" }}
+                      hash={`thread-${t.id}`}
+                      className="flex gap-2 hover:underline"
+                    >
+                      <code className="shrink-0 text-xs">
+                        {t.path}
+                        {t.line ? `:${t.line}` : " (outdated)"}
+                      </code>
+                      <span className="truncate text-muted-foreground">{t.comments[0]?.body}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {detail.state === "OPEN" && (
+            <MergeBox key={`${detail.repo}#${detail.number}:${detail.headOid}`} detail={detail} />
+          )}
+          <CommentBox detail={detail} />
+        </div>
+        <aside className="pull-conversation-checks" aria-label="Pull request checks">
+          <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
+          <ChecksContent detail={detail} />
+        </aside>
       </div>
     </div>
   )
@@ -163,50 +173,99 @@ const MERGE_STATE_TEXT: Record<string, string> = {
 function MergeBox({ detail }: { detail: PullRequestDetail }) {
   const client = useClient()
   const [method, setMethod] = useState<MergeMethod>(detail.mergeMethods[0] ?? "merge")
+  const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
-  const blocked = detail.isDraft || detail.mergeable === "CONFLICTING"
+  const submitting = useRef(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const descriptionId = useId()
+  const blocked =
+    detail.isDraft || detail.mergeable === "CONFLICTING" || !detail.mergeMethods.includes(method)
+
+  const cancel = () => {
+    if (submitting.current) return
+    setConfirming(false)
+    buttonRef.current?.focus()
+  }
 
   const merge = async () => {
-    if (busy) return
-    if (!window.confirm(`${MERGE_LABELS[method]} ${detail.repo}#${detail.number}?`)) return
+    if (submitting.current || blocked) return
+    if (!confirming) {
+      setConfirming(true)
+      return
+    }
+    submitting.current = true
     setBusy(true)
     try {
       await client.merge(detail.repo, detail.number, method)
+      setConfirming(false)
       toast.success(`Merged #${detail.number}`)
     } catch (e) {
-      toast.error(`Merge failed: ${e instanceof Error ? e.message : e}`)
+      showError("Merge failed", e)
     } finally {
+      submitting.current = false
       setBusy(false)
     }
   }
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm">
+    <fieldset
+      aria-label="Merge pull request"
+      className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && confirming) {
+          event.preventDefault()
+          cancel()
+        }
+      }}
+    >
       <ReviewBadge decision={detail.reviewDecision} />
       {detail.mergeable === "CONFLICTING" && <Badge variant="destructive-light">Conflicts</Badge>}
       <span className="text-muted-foreground">
         {MERGE_STATE_TEXT[detail.mergeStateStatus] ?? detail.mergeStateStatus}
       </span>
-      <div className="ml-auto flex items-center gap-2">
-        {detail.mergeMethods.length > 1 && (
-          <Select value={method} onValueChange={(v) => setMethod(v as MergeMethod)}>
-            <SelectTrigger size="sm" className="w-52">
-              <SelectValue>{MERGE_LABELS[method]}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {detail.mergeMethods.map((m) => (
-                <SelectItem key={m} value={m}>
-                  {MERGE_LABELS[m]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Button size="sm" disabled={busy || blocked} onClick={merge}>
-          {MERGE_LABELS[method]}
+      <div className="ml-auto flex max-w-full flex-wrap justify-end gap-2">
+        <div className="flex h-7 w-52 justify-end">
+          {confirming ? (
+            <Button size="sm" variant="outline" disabled={busy} onClick={cancel}>
+              Cancel
+            </Button>
+          ) : detail.mergeMethods.length > 1 ? (
+            <Select value={method} onValueChange={(v) => setMethod(v as MergeMethod)}>
+              <SelectTrigger size="sm" className="w-52">
+                <SelectValue>{MERGE_LABELS[method]}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {detail.mergeMethods.map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {MERGE_LABELS[m]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+        </div>
+        <Button
+          ref={buttonRef}
+          size="sm"
+          className="grid"
+          disabled={busy || blocked}
+          aria-describedby={confirming ? descriptionId : undefined}
+          aria-busy={busy}
+          onClick={merge}
+        >
+          <span className="invisible col-start-1 row-start-1" aria-hidden="true">
+            Create a merge commit
+          </span>
+          <span className="col-start-1 row-start-1">
+            {busy ? "Merging…" : confirming ? "Confirm merge" : MERGE_LABELS[method]}
+          </span>
         </Button>
       </div>
-    </section>
+      <p id={descriptionId} role="status" className="min-h-5 basis-full text-muted-foreground">
+        {confirming &&
+          `${MERGE_LABELS[method]} for ${detail.repo}#${detail.number} into ${detail.baseRef}?`}
+      </p>
+    </fieldset>
   )
 }
 
@@ -224,7 +283,7 @@ function CommentBox({ detail }: { detail: PullRequestDetail }) {
       await client.comment(detail.repo, detail.number, body)
       setBody("")
     } catch (e) {
-      toast.error(`Comment failed: ${e instanceof Error ? e.message : e}`)
+      showError("Comment failed", e)
     } finally {
       setBusy(false)
     }
