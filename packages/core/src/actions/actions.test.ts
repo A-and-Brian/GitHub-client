@@ -2,7 +2,37 @@ import { expect, test } from "vitest"
 import { RestClient } from "../github/rest"
 import { fakeGitHub } from "../test/fake-github"
 import { submitReview, suggestionBody } from "./reviews"
-import { parseDispatchInputs } from "./workflows"
+import { approveRun, parseDispatchInputs } from "./workflows"
+
+test("approves a fork workflow run with GitHub's empty 201 response", async () => {
+  const requests: string[] = []
+  const rest = new RestClient({
+    fetch: async (input, init) => {
+      requests.push(`${init?.method} ${new URL(String(input)).pathname}`)
+      return new Response(null, { status: 201 })
+    },
+    getToken: () => "t",
+  })
+
+  await expect(approveRun(rest, "acme/api", 42)).resolves.toBeUndefined()
+  expect(requests).toEqual(["POST /repos/acme/api/actions/runs/42/approve"])
+})
+
+test("propagates workflow approval failures", async () => {
+  const gh = fakeGitHub([
+    {
+      method: "POST",
+      path: "/repos/acme/api/actions/runs/42/approve",
+      status: 403,
+      body: { message: "Resource not accessible by integration" },
+    },
+  ])
+  const rest = new RestClient({ fetch: gh.fetch, getToken: () => "t" })
+
+  await expect(approveRun(rest, "acme/api", 42)).rejects.toThrow(
+    "Resource not accessible by integration",
+  )
+})
 
 test("submits a review with single-line and multi-line comments", async () => {
   const gh = fakeGitHub([{ method: "POST", path: "/repos/acme/api/pulls/5/reviews", body: {} }])

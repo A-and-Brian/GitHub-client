@@ -306,6 +306,11 @@ export class GitHubClient {
     await Promise.all([this.refresh(jobKeys.runs(repo)), this.refresh(jobKeys.runJobs(runId))])
   }
 
+  async approveRun(repo: string, runId: number) {
+    await workflows.approveRun(this.rest, repo, runId)
+    await Promise.all([this.refresh(jobKeys.runs(repo)), this.refresh(jobKeys.runJobs(runId))])
+  }
+
   /** One run, for runs older than the latest ones kept in `collections.workflowRuns`. */
   async fetchRun(repo: string, runId: number) {
     return toWorkflowRun(repo, await this.rest.get(`/repos/${repo}/actions/runs/${runId}`))

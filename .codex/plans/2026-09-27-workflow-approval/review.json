@@ -1,0 +1,6 @@
+{
+  "approved": true,
+  "source": "explicit user message in conversation",
+  "decision": "Approved",
+  "note": "User approved after Plannotator review was opened; no CLI result file was present."
+}
