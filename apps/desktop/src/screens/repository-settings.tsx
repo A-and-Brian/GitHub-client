@@ -14,10 +14,10 @@ import { Button } from "@github-client/ui/components/button"
 import { Checkbox } from "@github-client/ui/components/checkbox"
 import { Input } from "@github-client/ui/components/input"
 import { Label } from "@github-client/ui/components/label"
-import { Link } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
 import { useSession } from "@/app/client"
 import { showError, useErrorToast } from "@/app/errors"
+import { RepositoryContext } from "@/components/repository-context"
 
 export function RepositorySettings({ owner, repo }: { owner: string; repo: string }) {
   const { client } = useSession()
@@ -179,15 +179,9 @@ export function RepositorySettings({ owner, repo }: { owner: string; repo: strin
 
   return (
     <div className="h-full overflow-y-auto">
+      <RepositoryContext owner={owner} repo={repo} location="Settings" />
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
         <header>
-          <Link
-            to="/actions/$owner/$repo"
-            params={{ owner, repo }}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            ← {repoName} Actions
-          </Link>
           <p className="text-xs text-muted-foreground">Repository settings</p>
           <h1 className="text-xl font-semibold">{repoName}</h1>
           <p className="mt-1 text-sm text-muted-foreground">

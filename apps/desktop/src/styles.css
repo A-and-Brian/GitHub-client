@@ -146,6 +146,23 @@
   color: var(--dark);
 }
 
+/* Keep touch commands discoverable without making rows intercept vertical scrolling. */
+@media (hover: none) {
+  .inbox-sortable-row .inbox-row-actions {
+    opacity: 1;
+  }
+  .inbox-sortable-row .inbox-direct-action {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inbox-sortable-row {
+    /* biome-ignore lint/complexity/noImportantStyles: override dnd-kit's inline transition for the user's motion preference */
+    transition: none !important;
+  }
+}
+
 /* Keep the PR layout responsive to its detail pane, including the inbox. */
 .pull-content-body {
   container: pull-pane / size;

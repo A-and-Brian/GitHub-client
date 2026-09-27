@@ -7,10 +7,22 @@ export type { TokenCheck } from "./auth/auth"
 export { REQUIRED_SCOPES } from "./auth/auth"
 export { GitHubClient, jobKeys } from "./client"
 export type { Collections } from "./collections"
+export type { ContributionCalendarData, ContributionDay, ContributionState } from "./contributions"
+export { Contributions } from "./contributions"
 export * from "./diff/parse"
 export * from "./diff/rows"
 export * from "./domain/types"
 export { GitHubError } from "./github/rest"
+export type {
+  InboxDropPosition,
+  InboxMoveTarget,
+  InboxMutationResult,
+  InboxOrderSection,
+  InboxPreference,
+  InboxPull,
+  InboxState,
+  InboxUndoToken,
+} from "./inbox"
 export * from "./logs/parse"
 export * from "./logs/view"
 export type { Platform, SecretStore } from "./platform"

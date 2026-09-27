@@ -14,10 +14,12 @@ export function Setup({
   client,
   error,
   onSignedIn,
+  className = "h-svh",
 }: {
   client: GitHubClient
   error?: string
   onSignedIn: (viewer: Viewer) => void
+  className?: string
 }) {
   const [token, setToken] = useState("")
   const [busy, setBusy] = useState(false)
@@ -77,7 +79,7 @@ export function Setup({
   }
 
   return (
-    <div className="flex h-svh items-center justify-center p-6">
+    <div className={`flex ${className} items-center justify-center p-6`}>
       <form
         className="flex w-full max-w-md flex-col gap-4"
         onSubmit={(e) => {

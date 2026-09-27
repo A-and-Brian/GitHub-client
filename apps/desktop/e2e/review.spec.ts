@@ -54,7 +54,7 @@ test("a failed PR refresh shows one toast and preserves loaded content", async (
   await page.route(filesUrl, failFiles)
   await page.getByRole("button", { name: "Refresh", exact: true }).click()
   await expect(errorToast).toBeVisible()
-  await page.getByRole("link", { name: "Inbox", exact: true }).click()
+  await page.getByRole("complementary").getByRole("link", { name: "Inbox", exact: true }).click()
   await expect(errorToast).toHaveCount(0)
 })
 
