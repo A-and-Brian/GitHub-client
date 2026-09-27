@@ -44,12 +44,13 @@ export function Boot() {
       const client = await getClient()
       const allowEnv = localStorage.getItem(SIGNED_OUT_KEY) === null
       if (!(await client.auth.restore({ allowEnv }))) return { phase: "setup", client } as State
+      const cachedViewer = localStorage.getItem(VIEWER_KEY)
       try {
         const viewer = await client.rest.get<{
           login: string
           name: string | null
           avatar_url: string
-        }>("/user")
+        }>("/user", undefined, {}, cachedViewer ? AbortSignal.timeout(3000) : undefined)
         return ready(client, {
           login: viewer.login,
           name: viewer.name,
@@ -64,8 +65,7 @@ export function Boot() {
           } as State
         }
         // Offline: start from cached data with the last known viewer.
-        const cached = localStorage.getItem(VIEWER_KEY)
-        if (cached) return ready(client, JSON.parse(cached) as Viewer)
+        if (cachedViewer) return ready(client, JSON.parse(cachedViewer) as Viewer)
         throw error
       }
     })()

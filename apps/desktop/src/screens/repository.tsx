@@ -1,12 +1,5 @@
 import { GitHubError } from "@github-client/core"
-import {
-  type ContentEntry,
-  getContents,
-  getReadme,
-  getRepository,
-  listBranches,
-  type RepositorySummary,
-} from "@github-client/core/repositories"
+import type { ContentEntry, getContents } from "@github-client/core/repositories"
 import { Button } from "@github-client/ui/components/button"
 import { Link, useNavigate } from "@tanstack/react-router"
 import {
@@ -18,22 +11,15 @@ import {
   GitBranchIcon,
   RefreshCwIcon,
 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useMemo } from "react"
 import { useSession } from "@/app/client"
+import { useRepositoryPages, useRepositoryResource } from "@/app/repository-cache"
+import { RepositoryCacheStatus } from "@/components/repository-cache-status"
 import { RepositoryContext } from "@/components/repository-context"
 import { RepositoryReadme } from "@/components/repository-readme"
 import { openExternal } from "@/platform"
 
 type Tab = "code" | "pulls"
-type Pull = {
-  number: number
-  title: string
-  state: "open" | "closed"
-  draft: boolean
-  user?: { login?: string }
-  html_url: string
-  updated_at: string
-}
 
 export function RepositoryBrowser({
   owner,
@@ -48,211 +34,69 @@ export function RepositoryBrowser({
   path: string
   tab: Tab
 }) {
-  const { client } = useSession()
+  const { client, viewer } = useSession()
   const navigate = useNavigate()
   const repoName = `${owner}/${repo}`
-  const [summary, setSummary] = useState<RepositorySummary | null>(null)
-  const [summaryError, setSummaryError] = useState<unknown>(null)
-  const [summaryLoading, setSummaryLoading] = useState(true)
-  const [branches, setBranches] = useState<string[]>([])
-  const [branchPage, setBranchPage] = useState(1)
-  const [moreBranches, setMoreBranches] = useState(false)
-  const [branchLoading, setBranchLoading] = useState(false)
-  const [branchError, setBranchError] = useState<unknown>(null)
-  const [contents, setContents] = useState<Awaited<ReturnType<typeof getContents>> | null>(null)
-  const [contentsError, setContentsError] = useState<unknown>(null)
-  const [contentsLoading, setContentsLoading] = useState(true)
-  const [readme, setReadme] = useState<Awaited<ReturnType<typeof getReadme>>>(null)
-  const [readmeError, setReadmeError] = useState<unknown>(null)
-  const [readmeLoading, setReadmeLoading] = useState(true)
-  const [pulls, setPulls] = useState<Pull[]>([])
-  const [pullPage, setPullPage] = useState(1)
-  const [morePulls, setMorePulls] = useState(false)
-  const [pullError, setPullError] = useState<unknown>(null)
-  const [contentsErrorKey, setContentsErrorKey] = useState("")
-  const [pullLoading, setPullLoading] = useState(false)
-  const [retryCount, setRetryCount] = useState({
-    summary: 0,
-    contents: 0,
-    readme: 0,
-    branches: 0,
-    pulls: 0,
-  })
-  const [loadedContentsKey, setLoadedContentsKey] = useState("")
-  const [loadedReadmeKey, setLoadedReadmeKey] = useState("")
-  const [readmeErrorKey, setReadmeErrorKey] = useState("")
+  const identity = { host: client.rest.url("/"), accountLogin: viewer.login, owner, repo }
+  const summaryResource = useRepositoryResource({ ...identity, kind: "summary" })
+  const summary = summaryResource.state.data
+  const summaryError = summaryResource.state.loaded ? undefined : summaryResource.state.error
+  const summaryLoading = !summaryResource.state.loaded && !summaryResource.state.error
+  const branchesResource = useRepositoryPages(
+    { ...identity, kind: "branches", page: 1, pageSize: 100 },
+    tab === "code" && !summaryError,
+  )
+  const branches = branchesResource.state.data?.items.map((branch) => branch.name) ?? []
+  const moreBranches = branchesResource.state.data?.hasMore ?? false
+  const branchLoading = branchesResource.state.refreshing
+  const branchError = branchesResource.state.error
   const currentRef = refName ?? summary?.defaultBranch ?? branches[0] ?? ""
-  const contentsKey = `${owner}/${repo}@${currentRef}:${path}`
-  const readmeKey = `${owner}/${repo}@${currentRef}:README`
-  const versions = useRef({ summary: 0, contents: 0, readme: 0, branches: 0, pulls: 0 })
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retry counter changes intentionally refetch this resource.
-  useEffect(() => {
-    const version = ++versions.current.summary
-    setSummary(null)
-    setSummaryError(null)
-    setSummaryLoading(true)
-    setBranches([])
-    setBranchPage(1)
-    setMoreBranches(false)
-    void getRepository(client.rest, owner, repo)
-      .then((value) => {
-        if (versions.current.summary === version) setSummary(value)
-      })
-      .catch((error: unknown) => {
-        if (versions.current.summary === version) setSummaryError(error)
-      })
-      .finally(() => {
-        if (versions.current.summary === version) setSummaryLoading(false)
-      })
-    return () => {
-      versions.current.summary++
+  const contentsResource = useRepositoryResource(
+    { ...identity, kind: "contents", ref: currentRef, path },
+    tab === "code" && Boolean(currentRef) && !summaryError,
+  )
+  const contents = contentsResource.state.data
+  const contentsError = contentsResource.state.loaded ? undefined : contentsResource.state.error
+  const contentsLoading = !contentsResource.state.loaded && !contentsError
+  const readmeResource = useRepositoryResource(
+    { ...identity, kind: "readme", ref: currentRef },
+    tab === "code" && !path && Boolean(currentRef) && !summaryError,
+  )
+  const readme = readmeResource.state.data
+  const readmeError = readmeResource.state.loaded ? undefined : readmeResource.state.error
+  const readmeLoading = !readmeResource.state.loaded && !readmeError
+  const pullsResource = useRepositoryPages(
+    { ...identity, kind: "pulls", page: 1, pageSize: 30, query: "state=open" },
+    tab === "pulls" && !summaryError,
+  )
+  const pulls = pullsResource.state.data?.items ?? []
+  const morePulls = pullsResource.state.data?.hasMore ?? false
+  const pullLoading = !pullsResource.state.loaded && !pullsResource.state.error
+  const pullError = pullsResource.state.error
+  const retry = (resource: "summary" | "contents" | "readme" | "branches" | "pulls") => {
+    if (resource === "branches") void branchesResource.retry()
+    else if (resource === "pulls") void pullsResource.retry()
+    else {
+      const resources = {
+        summary: summaryResource,
+        contents: contentsResource,
+        readme: readmeResource,
+      }
+      void resources[resource].refresh()
     }
-  }, [client, owner, repo, retryCount.summary])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retry counter changes intentionally refetch this resource.
-  useEffect(() => {
-    if (tab !== "code") {
-      setContentsLoading(false)
-      return
-    }
-    if (!currentRef) {
-      setContentsLoading(false)
-      return
-    }
-    const version = ++versions.current.contents
-    setContents(null)
-    setContentsError(null)
-    setContentsErrorKey("")
-    setLoadedContentsKey("")
-    setContentsLoading(true)
-    void getContents(client.rest, owner, repo, path, currentRef)
-      .then((value) => {
-        if (versions.current.contents === version) {
-          setContents(value)
-          setLoadedContentsKey(contentsKey)
-        }
-      })
-      .catch((error: unknown) => {
-        if (versions.current.contents === version) {
-          setContentsError(error)
-          setContentsErrorKey(contentsKey)
-        }
-      })
-      .finally(() => {
-        if (versions.current.contents === version) setContentsLoading(false)
-      })
-    return () => {
-      versions.current.contents++
-    }
-  }, [client, owner, repo, path, currentRef, tab, retryCount.contents, contentsKey])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retry counter changes intentionally refetch this resource.
-  useEffect(() => {
-    if (tab !== "code") {
-      setReadmeLoading(false)
-      return
-    }
-    if (!currentRef) {
-      setReadmeLoading(false)
-      return
-    }
-    const version = ++versions.current.readme
-    setReadme(null)
-    setReadmeError(null)
-    setLoadedReadmeKey("")
-    setReadmeErrorKey("")
-    setReadmeLoading(true)
-    void getReadme(client.rest, owner, repo, currentRef)
-      .then((value) => {
-        if (versions.current.readme === version) {
-          setReadme(value)
-          setLoadedReadmeKey(readmeKey)
-        }
-      })
-      .catch((error: unknown) => {
-        if (versions.current.readme === version) {
-          setReadmeError(error)
-          setReadmeErrorKey(readmeKey)
-        }
-      })
-      .finally(() => {
-        if (versions.current.readme === version) setReadmeLoading(false)
-      })
-    return () => {
-      versions.current.readme++
-    }
-  }, [client, owner, repo, currentRef, tab, retryCount.readme, readmeKey])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retry counter changes intentionally refetch this resource.
-  useEffect(() => {
-    const version = ++versions.current.branches
-    setBranchError(null)
-    setBranchLoading(true)
-    void listBranches(client.rest, owner, repo, branchPage)
-      .then(({ items, hasMore }) => {
-        if (versions.current.branches !== version) return
-        setBranches((current) =>
-          branchPage === 1
-            ? items.map((branch) => branch.name)
-            : [...new Set([...current, ...items.map((branch) => branch.name)])],
-        )
-        setMoreBranches(hasMore)
-      })
-      .catch((error: unknown) => {
-        if (versions.current.branches === version) {
-          setBranchError(error)
-          setMoreBranches(false)
-        }
-      })
-      .finally(() => {
-        if (versions.current.branches === version) setBranchLoading(false)
-      })
-    return () => {
-      versions.current.branches++
-    }
-  }, [client, owner, repo, branchPage, retryCount.branches])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retry counter changes intentionally refetch this resource.
-  useEffect(() => {
-    if (tab !== "pulls") return
-    const version = ++versions.current.pulls
-    setPullLoading(true)
-    setPullError(null)
-    void client.rest
-      .get<Pull[]>(`/repos/${owner}/${repo}/pulls`, { state: "open", per_page: 30, page: pullPage })
-      .then((items) => {
-        if (versions.current.pulls !== version) return
-        setPulls((current) =>
-          pullPage === 1
-            ? items
-            : [...new Map([...current, ...items].map((pull) => [pull.number, pull])).values()],
-        )
-        setMorePulls(items.length === 30)
-      })
-      .catch((error: unknown) => {
-        if (versions.current.pulls === version) {
-          if (
-            pullPage === 1 ||
-            (error instanceof GitHubError && [401, 403, 404].includes(error.status))
-          ) {
-            setPulls([])
-            setMorePulls(false)
-          }
-          setPullError(error)
-        }
-      })
-      .finally(() => {
-        if (versions.current.pulls === version) setPullLoading(false)
-      })
-    return () => {
-      versions.current.pulls++
-    }
-  }, [client, owner, repo, tab, pullPage, retryCount.pulls])
-
-  const retry = (key: keyof typeof retryCount) =>
-    setRetryCount((current) => ({ ...current, [key]: current[key] + 1 }))
-
+  }
+  const activeResources = [
+    summaryResource,
+    ...(tab === "pulls"
+      ? [pullsResource]
+      : [
+          branchesResource,
+          ...(currentRef ? [contentsResource, ...(!path ? [readmeResource] : [])] : []),
+        ]),
+  ]
+  const refresh = () => {
+    for (const resource of activeResources) void resource.refresh()
+  }
   const updateLocation = (next: { ref?: string; path?: string; tab?: Tab }) => {
     void navigate({
       to: "/repo/$owner/$repo",
@@ -339,6 +183,37 @@ export function RepositoryBrowser({
           </div>
         </div>
       </header>
+      <div className="flex items-center justify-between gap-3 border-b px-6 py-2">
+        <RepositoryCacheStatus states={activeResources.map((resource) => resource.state)} />
+        {activeResources.some((resource) => resource.state.loaded && resource.state.error) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              for (const resource of activeResources)
+                if (resource.state.error) void resource.retry()
+            }}
+          >
+            Retry
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label="Refresh repository"
+          disabled={activeResources.some((resource) => resource.state.refreshing)}
+          onClick={refresh}
+        >
+          <RefreshCwIcon
+            className={
+              activeResources.some((resource) => resource.state.refreshing)
+                ? "animate-spin"
+                : undefined
+            }
+          />{" "}
+          Refresh
+        </Button>
+      </div>
       {summaryLoading || summaryError ? (
         <StateMessage
           loading={summaryLoading}
@@ -350,14 +225,15 @@ export function RepositoryBrowser({
         <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
           <div className="mx-auto max-w-6xl">
             <h2 className="mb-4 text-lg font-semibold">Open pull requests</h2>
-            {Boolean(pullError) && (
+            {Boolean(pullError) && !pullsResource.state.loaded && (
               <StateMessage
                 error={pullError}
+                saved={pullsResource.state.loaded}
                 title="Could not load pull requests"
                 retry={() => retry("pulls")}
               />
             )}
-            {!pullError && pulls.length === 0 && !pullLoading && (
+            {pullsResource.state.loaded && pulls.length === 0 && (
               <p className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
                 No open pull requests.
               </p>
@@ -386,11 +262,12 @@ export function RepositoryBrowser({
                 Loading pull requests…
               </p>
             )}
-            {morePulls && !pullLoading && !pullError && (
+            {morePulls && !pullLoading && (
               <Button
                 variant="outline"
                 className="mt-4"
-                onClick={() => setPullPage((page) => page + 1)}
+                disabled={pullsResource.state.refreshing}
+                onClick={() => void pullsResource.loadMore()}
               >
                 Load more
               </Button>
@@ -423,7 +300,7 @@ export function RepositoryBrowser({
                     size="sm"
                     variant="ghost"
                     disabled={branchLoading}
-                    onClick={() => setBranchPage((page) => page + 1)}
+                    onClick={() => void branchesResource.loadMore()}
                   >
                     {branchLoading ? "Loading…" : "More branches"}
                   </Button>
@@ -472,16 +349,13 @@ export function RepositoryBrowser({
               <p className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
                 No branch is available to browse yet.
               </p>
-            ) : (loadedContentsKey !== contentsKey && contentsErrorKey !== contentsKey) ||
-              contentsLoading ? (
+            ) : contentsLoading ? (
               <p role="status" className="rounded-lg border p-6 text-sm text-muted-foreground">
                 Loading repository contents…
               </p>
-            ) : contentsErrorKey === contentsKey &&
-              contentsError instanceof GitHubError &&
-              contentsError.status === 409 ? (
+            ) : contentsError instanceof GitHubError && contentsError.status === 409 ? (
               <EmptyRepository error={contentsError} />
-            ) : contentsErrorKey === contentsKey && contentsError ? (
+            ) : contentsError ? (
               <StateMessage
                 error={contentsError}
                 title="Could not load repository contents"
@@ -563,13 +437,13 @@ export function RepositoryBrowser({
                   <p className="text-sm text-muted-foreground">
                     No README is available until this repository has a branch.
                   </p>
-                ) : readmeErrorKey === readmeKey ? (
+                ) : readmeError ? (
                   <StateMessage
                     error={readmeError}
                     title="Could not load README"
                     retry={() => retry("readme")}
                   />
-                ) : loadedReadmeKey !== readmeKey || readmeLoading ? (
+                ) : readmeLoading ? (
                   <p role="status" className="text-sm text-muted-foreground">
                     Loading README…
                   </p>
@@ -593,11 +467,13 @@ export function RepositoryBrowser({
 
 function StateMessage({
   loading,
+  saved = false,
   error,
   title,
   retry,
 }: {
   loading?: boolean
+  saved?: boolean
   error?: unknown
   title?: string
   retry?: () => void
@@ -612,9 +488,11 @@ function StateMessage({
     <div role="alert" className="m-6 rounded-lg border p-5 text-sm">
       <p className="font-medium">{title ?? "Could not load data"}</p>
       <p className="mt-1 text-muted-foreground">
-        {error instanceof Error
-          ? error.message
-          : "Check your connection and permissions, then try again."}
+        {!saved && !(error instanceof GitHubError)
+          ? "Not saved for offline use. Could not load this page. Check your connection and try again."
+          : error instanceof Error
+            ? error.message
+            : "Check your connection and permissions, then try again."}
       </p>
       {retry && (
         <Button variant="outline" size="sm" className="mt-3" onClick={retry}>

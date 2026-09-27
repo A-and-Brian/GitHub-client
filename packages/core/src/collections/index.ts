@@ -15,6 +15,7 @@ import type {
   WorkflowRun,
 } from "../domain/types"
 import type { InboxPreference } from "../inbox"
+import type { RepositoryResourceRow } from "../repository-cache"
 import { createSyncedCollection } from "./synced"
 
 export type { SyncedCollection } from "./synced"
@@ -37,6 +38,10 @@ export function createCollections(persistence?: PersistedCollectionPersistence) 
     workflowRuns: synced<WorkflowRun, number>("workflow-runs", (r) => r.id),
     jobs: synced<Job, number>("jobs", (j) => j.id),
     workflows: synced<Workflow, number>("workflows", (w) => w.id),
+    repositoryResources: synced<RepositoryResourceRow, string>(
+      "repository-resources",
+      (r) => r.key,
+    ),
     drafts: createDraftsCollection(persistence),
   }
 }
