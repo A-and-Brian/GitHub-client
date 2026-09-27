@@ -64,8 +64,9 @@ test("a draft line comment is submitted with the review", async ({ page }) => {
   await page.goto("/#/pr/acme/api/7?tab=files")
 
   const line = page.locator("div.group", { hasText: "const rows = visible()" })
-  await line.hover()
-  await line.getByRole("button", { name: "Comment on this line" }).click()
+  // Select the right-side line gutter and use the shortcut because virtualized rows can move under a hover.
+  await line.getByRole("button").nth(1).click()
+  await page.keyboard.press("c")
   await page.getByPlaceholder(/Ctrl\+Enter to save/).fill("Why visible()?")
   await page.getByRole("button", { name: "Save draft" }).click()
   await expect(page.getByText("Why visible()?")).toBeVisible()
