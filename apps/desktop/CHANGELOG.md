@@ -1,5 +1,29 @@
 # @github-client/desktop
 
+## 0.4.0
+
+### Minor Changes
+
+- [#18](https://github.com/Yis-company/GitHub-client/pull/18) [`f9078fd`](https://github.com/Yis-company/GitHub-client/commit/f9078fdbbd06059ae0430649f1ee0c74f8bd544a) Thanks [@ybtam](https://github.com/ybtam)! - Allow approving pull request workflow runs from the run page, with confirmation, error feedback, and refreshed run status.
+
+- [#17](https://github.com/Yis-company/GitHub-client/pull/17) [`462debf`](https://github.com/Yis-company/GitHub-client/commit/462debf77cd91a78fcaf84c51c3d9b0c3c9191c1) Thanks [@ybtam](https://github.com/ybtam)! - Show workflow checks beside the pull request conversation in wide detail panes, keeping checks visible while scrolling.
+
+- [#15](https://github.com/Yis-company/GitHub-client/pull/15) [`6c18a42`](https://github.com/Yis-company/GitHub-client/commit/6c18a4249ffa96f9ba089e0808b09b97ef1aea99) Thanks [@ybtam](https://github.com/ybtam)! - Add System, Light, and Dark appearance choices to the account menu and command palette. Follow the system theme by default, preserve saved preferences, and match native controls to the selected theme.
+
+- [#11](https://github.com/Yis-company/GitHub-client/pull/11) [`b68ea2e`](https://github.com/Yis-company/GitHub-client/commit/b68ea2e34397376ea136fbee04edd0628c380071) Thanks [@ybtam](https://github.com/ybtam)! - Add pinned PRs, saved sidebar ordering, drag-and-drop organization with exact Undo, compact parked rows, and a resizable inbox sidebar.
+  
+  Restore cached rows and subscribed views after failed local database writes.
+
+### Patch Changes
+
+- [#19](https://github.com/Yis-company/GitHub-client/pull/19) [`7eec5c1`](https://github.com/Yis-company/GitHub-client/commit/7eec5c101b76b92e1754feadfd9d1b95a98868d5) Thanks [@ybtam](https://github.com/ybtam)! - Prefetch pull request details and files when hovering a pull request in the list.
+
+- [#11](https://github.com/Yis-company/GitHub-client/pull/11) [`4f55439`](https://github.com/Yis-company/GitHub-client/commit/4f554393830fcef5b98cce851bd710536cdfe49b) Thanks [@ybtam](https://github.com/ybtam)! - Use a single PR inbox sidebar with collapsible snoozed and settled sections, consistent repository navigation, check-result summaries, and a GitHub contribution calendar.
+
+- [#20](https://github.com/Yis-company/GitHub-client/pull/20) [`dcb69b8`](https://github.com/Yis-company/GitHub-client/commit/dcb69b8d57c08d56e6b19c12619b620843e1725c) Thanks [@ybtam](https://github.com/ybtam)! - Run an explicit refresh after an in-flight pull request sync so the view can pick up the latest head revision.
+
+- [#11](https://github.com/Yis-company/GitHub-client/pull/11) [`3d21da9`](https://github.com/Yis-company/GitHub-client/commit/3d21da9f575db8c206cb240783e63232c5e110cd) Thanks [@ybtam](https://github.com/ybtam)! - Restore persistent outer navigation, retain the T3-style PR sidebar inside Inbox, and integrate native macOS window controls into the outer sidebar.
+
 ## 0.3.0
 
 ### Minor Changes
