@@ -1,5 +1,15 @@
 # @github-client/desktop
 
+## 0.6.0
+
+### Minor Changes
+
+- [#27](https://github.com/Yis-company/GitHub-client/pull/27) [`c9a589c`](https://github.com/Yis-company/GitHub-client/commit/c9a589c28038dacf8128732305a2ce52695f42cd) Thanks [@ybtam](https://github.com/ybtam)! - Keep scoped pull request inboxes inside organization, team, and repository tabs. Show workflow logs in contextual dialogs, avoid duplicate wide-screen check tabs, and browse repository files beside their preview.
+
+### Patch Changes
+
+- [#28](https://github.com/Yis-company/GitHub-client/pull/28) [`2a59d8a`](https://github.com/Yis-company/GitHub-client/commit/2a59d8a53e33fca4d13cbe9773cb1ce39fe2b14b) Thanks [@ybtam](https://github.com/ybtam)! - Keep visited team and organization repository lists and repository pages locally, render saved content immediately on return, and retain visited files for offline reading.
+
 ## 0.5.0
 
 ### Minor Changes
