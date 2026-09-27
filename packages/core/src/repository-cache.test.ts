@@ -32,6 +32,19 @@ const readmeKey = {
   ref: key.ref,
 }
 const contentKey = (path: string, accountLogin = "Yi") => ({ ...key, path, accountLogin })
+const releasesKey = (overrides: Partial<typeof releaseKeyBase> = {}) => ({
+  ...releaseKeyBase,
+  ...overrides,
+})
+const releaseKeyBase = {
+  kind: "releases" as const,
+  host: key.host,
+  accountLogin: key.accountLogin,
+  owner: key.owner,
+  repo: key.repo,
+  page: 1,
+  pageSize: 2,
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: Error) => void
@@ -137,6 +150,46 @@ test("paginated refresh stages loaded pages and retries a failed next page", asy
   await resource.load({ force: true })
   expect(resource.snapshot()?.data?.items.map((item) => item.id)).toEqual(["a", "b", "c"])
   expect(resource.snapshot()?.error).toBeUndefined()
+})
+
+test("release pages paginate and stay isolated by host, account, and repository", async () => {
+  const cache = new RepositoryCache(createCollections().repositoryResources)
+  const seen: string[] = []
+  const first = cache.paginated(
+    releasesKey(),
+    async (page) => {
+      seen.push(`main:${page}`)
+      return page === 1
+        ? { items: [{ id: 1 }, { id: 2 }], hasMore: true }
+        : { items: [{ id: 3 }], hasMore: false }
+    },
+    (release) => release.id,
+  )
+  await first.load()
+  await first.loadMore()
+  expect(first.snapshot()?.data).toMatchObject({
+    items: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    pages: 2,
+    hasMore: false,
+  })
+
+  for (const [name, overrides] of [
+    ["account", { accountLogin: "other" }],
+    ["host", { host: "https://github.example/api/v3" }],
+    ["repository", { repo: "other" }],
+  ] as const) {
+    const resource = cache.paginated(
+      releasesKey(overrides),
+      async () => {
+        seen.push(name)
+        return { items: [{ id: name }], hasMore: false }
+      },
+      (release) => release.id,
+    )
+    await resource.load()
+    expect(resource.snapshot()?.data?.items).toEqual([{ id: name }])
+  }
+  expect(seen).toEqual(["main:1", "main:2", "account", "host", "repository"])
 })
 
 test("keeps stale data during refresh errors and saves resolved null and empty pages", async () => {

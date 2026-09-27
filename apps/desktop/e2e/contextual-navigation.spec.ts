@@ -132,6 +132,160 @@ test("repository Inbox loads subsequent API pages, including PRs absent from per
   await expect(page.getByRole("button", { name: "Load more pull requests" })).toHaveCount(0)
 })
 
+test("repository Releases load on demand, preserve navigation, and hand assets to the browser", async ({
+  page,
+}, info) => {
+  const requests = await fakeGitHub(page)
+  await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  await page.addInitScript(() => {
+    window.open = (url) => {
+      ;(window as unknown as { externalHandoff?: string }).externalHandoff = String(url)
+      return null
+    }
+  })
+  await page.goto("/#/repo/acme/api")
+  await expect(page.getByRole("heading", { name: "Repository guide" })).toBeVisible()
+  expect(requests.filter((request) => request.path.endsWith("/releases"))).toHaveLength(0)
+  const nav = page.getByRole("navigation", { name: "Repository navigation" })
+  await nav.getByRole("button", { name: "Releases", exact: true }).click()
+  await expect(page).toHaveURL(/repo\/acme\/api\?tab=releases/)
+  await expect(
+    page.getByRole("heading", {
+      name: "Repository release with an intentionally long name that should wrap on narrow screens",
+    }),
+  ).toBeVisible()
+  await expect(page.getByText("v1.2.0", { exact: true })).toBeVisible()
+  await expect(page.getByText("Pre-release", { exact: true })).toBeVisible()
+  const notes = page.getByText("Release notes", { exact: true })
+  await notes.focus()
+  await page.keyboard.press("Enter")
+  await expect(page.getByText(/very-long-unbroken-sequence/)).toBeVisible()
+  await page.screenshot({ path: info.outputPath("repository-releases-wide.png") })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true)
+  expect(
+    await page
+      .getByRole("article")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true)
+  await page.screenshot({ path: info.outputPath("repository-releases-narrow.png") })
+
+  await page.getByRole("link", { name: "desktop-installer-with-a-long-name-x64.zip" }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { externalHandoff?: string }).externalHandoff),
+    )
+    .toBe(
+      "https://github.com/acme/api/releases/download/v1.2.0/desktop-installer-with-a-long-name-x64.zip",
+    )
+  await page.reload()
+  await expect(
+    page.getByRole("heading", { name: /Repository release with an intentionally long name/ }),
+  ).toBeVisible()
+  await nav.getByRole("button", { name: "Code", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Repository guide" })).toBeVisible()
+  expect(
+    requests
+      .filter((request) => request.path.endsWith("/releases"))
+      .every((request) => request.method === "GET"),
+  ).toBe(true)
+})
+
+test("repository Releases retry failures, show empty results, and load later pages", async ({
+  page,
+}) => {
+  const options = { releasesError: 403 }
+  const requests = await fakeGitHub(page, options)
+  await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  await page.goto("/#/repo/acme/api?tab=releases")
+  await expect(page.getByRole("alert")).toContainText("Could not load releases")
+  await expect(page.getByRole("alert")).toContainText("Contents access is required")
+  options.releasesError = undefined
+  await page.getByRole("button", { name: "Retry", exact: true }).last().click()
+  await expect(
+    page.getByRole("heading", { name: /Repository release with an intentionally long name/ }),
+  ).toBeVisible()
+
+  await page.route("https://api.github.com/repos/acme/api/releases?*", (route) => {
+    const pageNumber = Number(new URL(route.request().url()).searchParams.get("page"))
+    return route.fulfill({
+      json: Array.from({ length: pageNumber === 1 ? 100 : 1 }, (_, index) => ({
+        id: pageNumber * 100 + index,
+        name: `Release page ${pageNumber} item ${index}`,
+        tag_name: `v${pageNumber}.${index}`,
+        body: null,
+        draft: false,
+        prerelease: false,
+        published_at: null,
+        html_url: "https://github.com/acme/api/releases",
+        assets: [],
+      })),
+    })
+  })
+  await page.getByRole("button", { name: "Refresh repository" }).click()
+  await expect(page.getByText("Release page 1 item 0", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Load more releases" }).click()
+  await expect(page.getByText("Release page 2 item 0", { exact: true })).toBeVisible()
+  expect(
+    requests
+      .filter((request) => request.path.endsWith("/releases"))
+      .every((request) => request.method === "GET"),
+  ).toBe(true)
+})
+
+test("repository Releases show an empty state only after a successful empty response", async ({
+  page,
+}) => {
+  await fakeGitHub(page)
+  await page.route("https://api.github.com/repos/acme/api/releases?*", (route) =>
+    route.fulfill({ json: [] }),
+  )
+  await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  await page.goto("/#/repo/acme/api?tab=releases")
+  await expect(page.getByText("No releases yet.", { exact: true })).toBeVisible()
+  await page.route("https://api.github.com/repos/acme/api/releases?*", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: '{"message":"GitHub is temporarily unavailable"}',
+    }),
+  )
+  await page.getByRole("button", { name: "Refresh repository" }).click()
+  await expect(page.getByRole("alert")).toContainText("Could not refresh releases")
+  await expect(page.getByRole("alert")).toContainText("GitHub is temporarily unavailable")
+  await expect(page.getByText("No releases yet.", { exact: true })).toBeVisible()
+})
+
+test("repository Releases show loading until the successful empty response arrives", async ({
+  page,
+}) => {
+  await fakeGitHub(page)
+  let finishResponse!: () => void
+  let markRequested!: () => void
+  const responseGate = new Promise<void>((resolve) => {
+    finishResponse = resolve
+  })
+  const requestStarted = new Promise<void>((resolve) => {
+    markRequested = resolve
+  })
+  await page.route("https://api.github.com/repos/acme/api/releases?*", async (route) => {
+    markRequested()
+    await responseGate
+    await route.fulfill({ json: [] })
+  })
+  await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  await page.goto("/#/repo/acme/api?tab=releases")
+  await requestStarted
+  try {
+    await expect(page.getByText("Loading…", { exact: true })).toBeVisible()
+    await expect(page.getByText("No releases yet.", { exact: true })).toHaveCount(0)
+  } finally {
+    finishResponse()
+  }
+  await expect(page.getByText("No releases yet.", { exact: true })).toBeVisible()
+})
+
 test("changing entity scope and signing out clear the previous PR context", async ({ page }) => {
   await fakeGitHub(page, { hierarchy: true })
   await page.goto("/")

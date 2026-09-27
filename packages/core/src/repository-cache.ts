@@ -23,6 +23,15 @@ export type RepositoryResourceKey =
       pageSize: number
     }
   | {
+      kind: "releases"
+      host: string
+      accountLogin: string
+      owner: string
+      repo: string
+      page: number
+      pageSize: number
+    }
+  | {
       kind: "contents"
       host: string
       accountLogin: string
@@ -173,7 +182,7 @@ export class RepositoryCache {
   }
 
   paginated<T>(
-    key: Extract<RepositoryResourceKey, { kind: "catalog" | "branches" | "pulls" }>,
+    key: Extract<RepositoryResourceKey, { kind: "catalog" | "branches" | "pulls" | "releases" }>,
     fetchPage: (page: number) => Promise<RepositoryPage<T>>,
     getId: (item: T) => string | number,
   ): PaginatedResourceHandle<T> {
@@ -716,6 +725,16 @@ function resourceKey(key: RepositoryResourceKey): string {
         key.repo.toLowerCase(),
       ])
     case "branches":
+      return JSON.stringify([
+        key.host,
+        normalizeAccount(key.accountLogin),
+        key.kind,
+        key.owner.toLowerCase(),
+        key.repo.toLowerCase(),
+        key.page,
+        key.pageSize,
+      ])
+    case "releases":
       return JSON.stringify([
         key.host,
         normalizeAccount(key.accountLogin),

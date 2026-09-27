@@ -62,13 +62,16 @@ export const repositoryRoute = createRoute({
   ): ReturnType<typeof inboxSearch> & {
     ref?: string
     path?: string
-    tab: "code" | "pulls" | "actions" | "settings"
+    tab: "code" | "pulls" | "actions" | "releases" | "settings"
   } => ({
     ...inboxSearch(search),
     ref: typeof search.ref === "string" ? search.ref : undefined,
     path: typeof search.path === "string" ? search.path : undefined,
     tab:
-      search.tab === "pulls" || search.tab === "actions" || search.tab === "settings"
+      search.tab === "pulls" ||
+      search.tab === "actions" ||
+      search.tab === "releases" ||
+      search.tab === "settings"
         ? search.tab
         : "code",
   }),

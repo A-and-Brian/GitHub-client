@@ -132,6 +132,7 @@ export async function fakeGitHub(
     }>
     commentCount?: number
     repositoryReadme?: boolean
+    releasesError?: number
   } = {},
 ) {
   const settings = {
@@ -223,6 +224,34 @@ export async function fakeGitHub(
           requested_reviewers: [{ login: "octo" }],
         },
       ])
+    if (url.pathname === "/repos/acme/api/releases") {
+      if (options.releasesError)
+        return route.fulfill({
+          status: options.releasesError,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "Contents access is required to view releases" }),
+        })
+      return json(route, [
+        {
+          id: 101,
+          name: "Repository release with an intentionally long name that should wrap on narrow screens",
+          tag_name: "v1.2.0",
+          body: "Release notes\n\nThis note includes a very-long-unbroken-sequence-that-should-wrap-within-the-release-card-on-a-narrow-screen-without-causing-horizontal-overflow.",
+          draft: false,
+          prerelease: true,
+          published_at: "2026-09-26T10:00:00Z",
+          html_url: "https://github.com/acme/api/releases/tag/v1.2.0",
+          assets: [
+            {
+              name: "desktop-installer-with-a-long-name-x64.zip",
+              size: 2048,
+              browser_download_url:
+                "https://github.com/acme/api/releases/download/v1.2.0/desktop-installer-with-a-long-name-x64.zip",
+            },
+          ],
+        },
+      ])
+    }
     if (url.pathname === "/repos/acme/api/branches")
       return json(route, [{ name: "main" }, { name: "feature" }])
     if (url.pathname === "/repos/acme/api/readme") {
