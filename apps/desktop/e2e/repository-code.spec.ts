@@ -60,3 +60,27 @@ test("narrow repository code opens the file drawer and returns focus after selec
     requests.filter((request) => request.path === "/repos/acme/api/contents/src"),
   ).toHaveLength(1)
 })
+
+test("the split navigator and file preview reuse saved directories after an offline reload", async ({
+  page,
+}) => {
+  const requests = await fakeGitHub(page)
+  await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  await page.goto("/#/repo/acme/api")
+  const navigator = page.getByRole("navigation", { name: "Repository files" })
+  await navigator.getByRole("button", { name: "Expand src", exact: true }).click()
+  await navigator.getByRole("button", { name: "src", exact: true }).click()
+  await expect(page.getByRole("region", { name: "Files" })).toBeVisible()
+  expect(
+    requests.filter((request) => request.path === "/repos/acme/api/contents/src"),
+  ).toHaveLength(1)
+  await navigator.getByRole("button", { name: "index.ts", exact: true }).click()
+  await expect(page.locator("pre")).toContainText("export")
+  await expect(page.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
+  await page.route("https://api.github.com/**", (route) => route.abort("internetdisconnected"))
+  await page.reload()
+  await expect(page.locator("pre")).toContainText("export")
+  await expect(navigator.getByRole("button", { name: "index.ts", exact: true })).toBeVisible()
+  await navigator.getByRole("button", { name: "src", exact: true }).click()
+  await expect(page.getByRole("region", { name: "Files" })).toBeVisible()
+})

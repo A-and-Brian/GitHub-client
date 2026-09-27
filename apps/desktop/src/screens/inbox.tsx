@@ -14,6 +14,7 @@ import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 import { ContributionCalendar } from "@/components/contribution-calendar"
+import { RepositoryCacheStatus } from "@/components/repository-cache-status"
 import { useInboxDrag } from "./inbox-drag"
 import { useInboxGeometry } from "./inbox-geometry"
 import { InboxHeader } from "./inbox-header"
@@ -58,7 +59,7 @@ export function Inbox({
   const [initialView] = useState(() => savedViews.get(client)?.get(viewKey))
   const savedView = useRef(initialView)
   const location = useInboxLocation()
-  const repositoryData = useRepositoryInboxData(entityScope?.repo)
+  const repositoryData = useRepositoryInboxData(entityScope?.repo, active)
   const pulls = useMemo(() => {
     const syncedIds = new Set(syncedPulls.map((pull) => pull.id))
     return [...syncedPulls, ...repositoryData.items.filter((pull) => !syncedIds.has(pull.id))]
@@ -374,16 +375,37 @@ export function Inbox({
                   groups.map((group) => client.refresh(jobKeys.groupPulls(group.id))),
                 )
             }}
-            refreshing={entityScope?.repo ? repositoryData.loading : Boolean(status?.running)}
+            refreshing={entityScope?.repo ? repositoryData.refreshing : Boolean(status?.running)}
             online={online}
           />
           {entityScope && (
-            <p className="px-4 py-2 text-xs text-muted-foreground">
-              Filtered to {entityScope.repo ?? entityScope.groupId?.replace(/^(org|team):/, "")}.
-              Reordering is available in the global Inbox.
-            </p>
+            <div className="px-4 py-2">
+              <p className="text-xs text-muted-foreground">
+                Filtered to {entityScope.repo ?? entityScope.groupId?.replace(/^(org|team):/, "")}.
+                Reordering is available in the global Inbox.
+              </p>
+              {entityScope.repo && (
+                <div className="mt-1 flex items-center gap-2">
+                  <RepositoryCacheStatus states={[repositoryData.state]} />
+                  {repositoryData.state.loaded && repositoryData.error && (
+                    <button
+                      type="button"
+                      onClick={repositoryData.retry}
+                      className="shrink-0 text-xs underline"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {repositoryData.pages > 0 && (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {repositoryData.pages} page{repositoryData.pages === 1 ? "" : "s"} cached
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           )}
-          {Boolean(repositoryData.error) && (
+          {Boolean(repositoryData.error) && !repositoryData.state.loaded && (
             <div role="alert" className="p-3 text-sm">
               Could not load repository pull requests.{" "}
               <button type="button" onClick={repositoryData.retry} className="underline">

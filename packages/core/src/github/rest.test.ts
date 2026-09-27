@@ -82,4 +82,29 @@ describe("RestClient", () => {
     expect(error).toBeInstanceOf(GitHubError)
     expect(error).toMatchObject({ status: 404, message: "Not Found" })
   })
+
+  test("distinguishes secondary limit responses from permission denial", async () => {
+    const gh = fakeGitHub([
+      {
+        path: "/secondary",
+        status: 403,
+        body: { message: "You have exceeded a secondary rate limit" },
+        headers: { "Retry-After": "2" },
+      },
+      {
+        path: "/limited",
+        status: 429,
+        body: { message: "Slow down" },
+        headers: { "Retry-After": "1" },
+      },
+      { path: "/forbidden", status: 403, body: { message: "Resource not accessible" } },
+    ])
+    const rest = client(gh.fetch)
+    const secondary = await rest.get("/secondary").catch((error) => error)
+    const limited = await rest.get("/limited").catch((error) => error)
+    const denied = await rest.get("/forbidden").catch((error) => error)
+    expect(secondary).toMatchObject({ status: 403, rateLimited: true, retryAfterMs: 2_000 })
+    expect(limited).toMatchObject({ status: 429, rateLimited: true, retryAfterMs: 1_000 })
+    expect(denied).toMatchObject({ status: 403, rateLimited: false, retryAfterMs: 0 })
+  })
 })

@@ -1,5 +1,6 @@
-import type { RestClient } from "@github-client/core/github/rest"
-import { type ContentEntry, getContents } from "@github-client/core/repositories"
+import type { ContentEntry } from "@github-client/core/repositories"
+import { getContents } from "@github-client/core/repositories"
+import type { RepositoryResourceHandle } from "@github-client/core/repository-cache"
 import { Button } from "@github-client/ui/components/button"
 import {
   Dialog,
@@ -9,6 +10,7 @@ import {
 } from "@github-client/ui/components/dialog"
 import { ChevronDownIcon, FileIcon, FolderIcon, RefreshCwIcon } from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
+import { useSession } from "@/app/client"
 
 type DirectoryState = {
   entries?: ContentEntry[]
@@ -17,22 +19,23 @@ type DirectoryState = {
 }
 
 export function RepositoryFileNavigator({
-  rest,
   owner,
   repo,
   refName,
   path,
   onSelect,
   children,
+  active = true,
 }: {
-  rest: RestClient
   owner: string
   repo: string
   refName: string
   path: string
   onSelect: (path: string) => void
   children: ReactNode
+  active?: boolean
 }) {
+  const { client, viewer } = useSession()
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({})
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]))
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -41,11 +44,26 @@ export function RepositoryFileNavigator({
   const requests = useRef(new Map<string, number>())
   const inFlight = useRef(new Map<string, Promise<void>>())
   const requestId = useRef(0)
-  const loadedDirectories = useRef(new Set<string>())
+  const subscriptions = useRef(new Map<string, () => void>())
+  const handles = useRef(
+    new Map<string, RepositoryResourceHandle<Awaited<ReturnType<typeof getContents>>>>(),
+  )
+  const directoryResource = useCallback(
+    (directory: string) => ({
+      kind: "contents" as const,
+      host: client.rest.url("/"),
+      accountLogin: viewer.login,
+      owner,
+      repo,
+      ref: refName,
+      path: directory,
+    }),
+    [client, viewer.login, owner, repo, refName],
+  )
 
   const loadDirectory = useCallback(
     (directory: string, retry = false): Promise<void> => {
-      if (!retry && loadedDirectories.current.has(directory)) return Promise.resolve()
+      if (!active) return Promise.resolve()
       if (!retry && inFlight.current.has(directory)) return inFlight.current.get(directory)!
       const id = ++requestId.current
       requests.current.set(directory, id)
@@ -55,14 +73,43 @@ export function RepositoryFileNavigator({
       }))
       const request = (async () => {
         try {
-          const result = await getContents(rest, owner, repo, directory, refName)
+          let resource = handles.current.get(directory)
+          if (!resource) {
+            resource = client.repositoryCache.resource(directoryResource(directory), () =>
+              getContents(client.rest, owner, repo, directory, refName),
+            )
+            handles.current.set(directory, resource)
+            const sync = () => {
+              const snapshot = resource?.snapshot()
+              const result = snapshot?.data
+              setDirectories((current) => ({
+                ...current,
+                [directory]: {
+                  entries: result?.kind === "directory" ? result.entries : result ? [] : undefined,
+                  loading: snapshot?.refreshing || !snapshot?.loaded,
+                  error: snapshot?.error,
+                },
+              }))
+            }
+            subscriptions.current.set(directory, resource.subscribe(sync))
+          }
+          const snapshot = resource.snapshot()
+          if (snapshot?.data) {
+            setDirectories((current) => ({
+              ...current,
+              [directory]: {
+                entries: snapshot.data?.kind === "directory" ? snapshot.data.entries : [],
+                loading: snapshot.refreshing,
+                error: snapshot.error,
+              },
+            }))
+          }
+          if (retry) await resource.retry()
+          else await resource.load()
           if (requests.current.get(directory) !== id) return
-          loadedDirectories.current.add(directory)
-          setDirectories((current) => ({
-            ...current,
-            [directory]:
-              result.kind === "directory" ? { entries: result.entries } : { entries: [] },
-          }))
+          const current = resource.snapshot()
+          if (!current?.data && current?.error) throw current.error
+          if (!current?.data) throw new Error("Directory contents are unavailable")
         } catch (error) {
           if (requests.current.get(directory) === id)
             setDirectories((current) => ({ ...current, [directory]: { error } }))
@@ -76,7 +123,7 @@ export function RepositoryFileNavigator({
       inFlight.current.set(directory, request)
       return request
     },
-    [rest, owner, repo, refName],
+    [active, client, directoryResource, owner, repo, refName],
   )
 
   useEffect(() => {
@@ -92,13 +139,18 @@ export function RepositoryFileNavigator({
     setExpanded(new Set([""]))
     requests.current.clear()
     inFlight.current.clear()
-    loadedDirectories.current.clear()
-    void loadDirectory("")
+    for (const unsubscribe of subscriptions.current.values()) unsubscribe()
+    subscriptions.current.clear()
+    handles.current.clear()
+    if (active) void loadDirectory("")
     return () => {
       requests.current.clear()
       inFlight.current.clear()
+      for (const unsubscribe of subscriptions.current.values()) unsubscribe()
+      subscriptions.current.clear()
+      handles.current.clear()
     }
-  }, [loadDirectory])
+  }, [loadDirectory, active])
 
   // Reopen the URL's ancestors so deep links reveal the selected file in the tree.
   useEffect(() => {
@@ -107,6 +159,7 @@ export function RepositoryFileNavigator({
     const parts = path.split("/").filter(Boolean)
     const parents = parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"))
     setExpanded((current) => new Set([...current, ...parents]))
+    if (!active) return
     void (async () => {
       for (const parent of ["", ...parents]) {
         if (cancelled) return
@@ -116,7 +169,7 @@ export function RepositoryFileNavigator({
     return () => {
       cancelled = true
     }
-  }, [path, loadDirectory])
+  }, [path, loadDirectory, active])
 
   const toggleDirectory = (entry: ContentEntry) => {
     setExpanded((current) => {
@@ -138,7 +191,7 @@ export function RepositoryFileNavigator({
           Loading…
         </p>
       )
-    if (state?.error)
+    if (state?.error && !state.entries)
       return (
         <div role="alert" className="p-3 text-xs">
           <p>Could not load this directory.</p>
@@ -147,49 +200,61 @@ export function RepositoryFileNavigator({
           </Button>
         </div>
       )
-    return state?.entries?.map((entry) => (
-      <div key={entry.path}>
-        <div className={`flex items-center gap-1 ${path === entry.path ? "bg-muted" : ""}`}>
-          {entry.type === "dir" ? (
-            <button
-              type="button"
-              aria-label={`${expanded.has(entry.path) ? "Collapse" : "Expand"} ${entry.name}`}
-              aria-expanded={expanded.has(entry.path)}
-              onClick={() => toggleDirectory(entry)}
-              className="rounded p-1 hover:bg-muted"
-            >
-              <ChevronDownIcon
-                className={`size-3 transition-transform ${expanded.has(entry.path) ? "" : "-rotate-90"}`}
-              />
-            </button>
-          ) : (
-            <span className="w-5" />
-          )}
-          <button
-            type="button"
-            title={entry.name}
-            onClick={() => {
-              if (entry.type === "dir") {
-                if (!expanded.has(entry.path)) toggleDirectory(entry)
-              }
-              onSelect(entry.path)
-              if (narrow) setDrawerOpen(false)
-            }}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1.5 text-left text-xs hover:bg-muted"
-          >
-            {entry.type === "dir" ? (
-              <FolderIcon className="size-3.5 shrink-0" />
-            ) : (
-              <FileIcon className="size-3.5 shrink-0" />
-            )}
-            <span className="truncate">{entry.name}</span>
-          </button>
-        </div>
-        {entry.type === "dir" && expanded.has(entry.path) && (
-          <div className="ml-3 border-l pl-1">{tree(entry.path, nextAncestors)}</div>
+    return (
+      <>
+        {state?.error && (
+          <div role="alert" className="p-2 text-xs">
+            <p>Could not refresh this directory.</p>
+            <Button variant="ghost" size="sm" onClick={() => void loadDirectory(directory, true)}>
+              <RefreshCwIcon /> Retry
+            </Button>
+          </div>
         )}
-      </div>
-    ))
+        {state?.entries?.map((entry) => (
+          <div key={entry.path}>
+            <div className={`flex items-center gap-1 ${path === entry.path ? "bg-muted" : ""}`}>
+              {entry.type === "dir" ? (
+                <button
+                  type="button"
+                  aria-label={`${expanded.has(entry.path) ? "Collapse" : "Expand"} ${entry.name}`}
+                  aria-expanded={expanded.has(entry.path)}
+                  onClick={() => toggleDirectory(entry)}
+                  className="rounded p-1 hover:bg-muted"
+                >
+                  <ChevronDownIcon
+                    className={`size-3 transition-transform ${expanded.has(entry.path) ? "" : "-rotate-90"}`}
+                  />
+                </button>
+              ) : (
+                <span className="w-5" />
+              )}
+              <button
+                type="button"
+                title={entry.name}
+                onClick={() => {
+                  if (entry.type === "dir") {
+                    if (!expanded.has(entry.path)) toggleDirectory(entry)
+                  }
+                  onSelect(entry.path)
+                  if (narrow) setDrawerOpen(false)
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1.5 text-left text-xs hover:bg-muted"
+              >
+                {entry.type === "dir" ? (
+                  <FolderIcon className="size-3.5 shrink-0" />
+                ) : (
+                  <FileIcon className="size-3.5 shrink-0" />
+                )}
+                <span className="truncate">{entry.name}</span>
+              </button>
+            </div>
+            {entry.type === "dir" && expanded.has(entry.path) && (
+              <div className="ml-3 border-l pl-1">{tree(entry.path, nextAncestors)}</div>
+            )}
+          </div>
+        ))}
+      </>
+    )
   }
 
   const navigation = (
