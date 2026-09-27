@@ -281,6 +281,8 @@ test("cached repository content stays visible when refresh fails", async ({ page
   await setup(page)
   await page.goto("/#/repo/acme/handbook?tab=code&path=docs%2Fguide.md")
   await expect(page.locator("pre")).toContainText("Guide on main")
+  // Visible content can still be saving; finish the initial cache operation before refreshing.
+  await expect(page.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
   await page.route("https://api.github.com/repos/acme/handbook/contents**", (route) =>
     route.fulfill({
       status: 503,
@@ -288,7 +290,13 @@ test("cached repository content stays visible when refresh fails", async ({ page
       body: JSON.stringify({ message: "Unavailable" }),
     }),
   )
+  const failedRefresh = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/repos/acme/handbook/contents/docs/guide.md" &&
+      response.status() === 503,
+  )
   await page.getByRole("button", { name: "Refresh repository", exact: true }).click()
+  await failedRefresh
   await expect(page.getByText(/Saved data.*could not refresh/i)).toBeVisible()
   await expect(page.locator("pre")).toContainText("Guide on main")
   await expect(page.getByText("Loading repository contents…")).toHaveCount(0)
