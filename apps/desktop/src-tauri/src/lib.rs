@@ -1,3 +1,4 @@
+mod database;
 mod secrets;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -8,6 +9,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_process::init())
     .invoke_handler(tauri::generate_handler![
+      database::initialize_database,
       secrets::secret_get,
       secrets::secret_set,
       secrets::secret_clear,

@@ -289,6 +289,10 @@ test("incoming GitHub activity changes freshness without reshuffling arranged wo
   await page.goto("/#/inbox")
   await expect(active(page).locator("[data-pull-id]")).toHaveCount(4)
   await menuAction(page, "Move down")
+  // The row moves optimistically; wait for the success toast before reloading persisted order.
+  await expect(
+    page.locator("[data-sonner-toast]").filter({ hasText: "Inbox order updated" }),
+  ).toBeVisible()
   const order = await active(page)
     .locator("[data-pull-id]")
     .evaluateAll((rows) => rows.map((r) => r.getAttribute("data-pull-id")))

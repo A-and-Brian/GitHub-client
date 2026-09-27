@@ -54,3 +54,6 @@ jobs:
         run: |
           mkdir -p ../dist
           cargo clippy --all-targets -- -D warnings
+      - name: Native regression tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --lib
