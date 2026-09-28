@@ -17,7 +17,11 @@ import { Setup } from "@/screens/setup"
 // cannot open the same SQLite collections twice.
 let clientPromise: Promise<GitHubClient> | undefined
 const getClient = () => {
-  clientPromise ??= createPlatform().then((platform) => new GitHubClient(platform))
+  clientPromise ??= createPlatform().then(async (platform) => {
+    const client = new GitHubClient(platform)
+    await client.prepareSync()
+    return client
+  })
   return clientPromise
 }
 

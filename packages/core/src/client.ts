@@ -382,6 +382,17 @@ export class GitHubClient {
     }
   }
 
+  /** Removes persisted Starred data before startup can expose or poll it. */
+  async prepareSync(): Promise<void> {
+    const { groups, pulls } = this.collections
+    await Promise.all([groups.collection.preload(), pulls.collection.preload()])
+    if (groups.collection.has("starred")) await groups.remove(["starred"])
+    const starredPullKeys = [...pulls.collection.values()]
+      .filter((pull) => pull.groupId === "starred")
+      .map((pull) => pull.key)
+    if (starredPullKeys.length > 0) await pulls.remove(starredPullKeys)
+  }
+
   /** Starts background sync of groups and of every group's pull requests. */
   startSync(): void {
     if (this.syncing) return
@@ -405,6 +416,7 @@ export class GitHubClient {
   private registerGroupJobs(): void {
     const current = new Set<string>()
     for (const group of this.collections.groups.collection.values()) {
+      if (group.kind === "starred") continue
       const key = jobKeys.groupPulls(group.id)
       current.add(key)
       this.poller.register(this.groupPullsJob(group.id))
@@ -431,6 +443,7 @@ export class GitHubClient {
   }
 
   watchGroup(groupId: string): () => void {
+    if (groupId === "starred") return () => {}
     return this.poller.watch(this.groupPullsJob(groupId))
   }
 
@@ -497,6 +510,7 @@ export class GitHubClient {
   }
 
   refresh(key: string): Promise<void> {
+    if (key === jobKeys.groupPulls("starred")) return Promise.resolve()
     return this.poller.refresh(key)
   }
 

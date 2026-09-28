@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stop syncing starred repositories — plan</title>
+<script>try{document.documentElement.classList.toggle('dark',(localStorage.getItem('plan-theme')|| (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))==='dark')}catch{}</script>
+<style>
+:root{color-scheme:light;--bg:#f5f4ef;--panel:#fff;--text:#242722;--muted:#62675e;--line:#d6dccf;--accent:#286448}
+html.dark{color-scheme:dark;--bg:#171c19;--panel:#222b25;--text:#eef3ea;--muted:#b6c2b5;--line:#435247;--accent:#98d9b1}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 system-ui,sans-serif}
+main{max-width:960px;margin:auto;padding:42px 24px 90px}h1{font-size:clamp(30px,5vw,46px);line-height:1.12;letter-spacing:-.03em;margin-top:34px}h2{margin:40px 0 16px;padding-top:22px;border-top:1px solid var(--line);font-size:24px}h3{font-size:19px;margin-top:28px;color:var(--accent)}p{margin:14px 0}li{margin:12px 0}ul{padding-left:24px}code{font-size:.85em;overflow-wrap:anywhere;background:var(--panel);padding:2px 5px;border:1px solid var(--line);border-radius:5px}button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:10px 14px;cursor:pointer}button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;color:var(--muted);font-size:13px}.flow{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:24px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}.card strong{display:block;color:var(--accent)}.card span{display:block;font-size:14px;color:var(--muted)}@media(max-width:580px){.flow{grid-template-columns:1fr}main{padding:24px 18px 60px}}
+</style></head><body><main>
+<div class="top"><span>GITHUB CLIENT · REVIEW BEFORE IMPLEMENTATION</span><button id="theme" type="button" aria-label="Toggle light or dark theme">Toggle theme</button></div>
+<div class="flow" aria-label="Planned automatic fetch scope"><div class="card"><strong>Keep: personal + member organizations</strong><span>Involving me · All discovered organizations · Member teams</span></div><div class="card"><strong>Remove: Starred as a sync source</strong><span>Discovery · Recurring PR searches · Legacy Starred group and PR copies</span></div></div>
+<h1>Stop syncing starred repositories</h1>
+<p>Status: Awaiting approval. Author: Astra. Date: 2026-09-28.</p>
+<h2>Outcome and scope</h2>
+<p>Stop treating a GitHub star as a reason to fetch a repository or its pull requests. Keep discovery of all organizations and teams the signed-in user belongs to, with the existing paginated behavior. Keep the personal <strong>Involving me</strong> feed.</p>
+<p>Scope assumption for approval: “personal account” means the existing <code>involves:@me</code> feed, which can include PRs the user participates in outside their organizations. It does not currently mean all PRs in personally owned repositories. A strict personal-owner/member-organization boundary would be a separate query change; revise this plan if that is the intended scope.</p>
+<h2>Current evidence</h2>
+<ul>
+<li><code>packages/core/src/sync/groups.ts:41-45</code>: group discovery requests organizations, teams, and up to 10 pages of starred repositories. Lines 102-113 create a Starred group and add its repositories to the shared cache.</li>
+<li><code>packages/core/src/client.ts:385-430</code>: background sync registers every group and immediately refreshes new groups. Persisted groups start polling before discovery finishes, so removing only the REST call leaves a startup request path.</li>
+<li><code>packages/core/src/sync/pulls.ts:103-137</code>: each group produces paginated GraphQL PR searches and stores group-specific copies.</li>
+<li><code>packages/core/src/inbox.ts:68-111</code>: Inbox deduplicates all cached PR copies. Removing a group alone does not hide its old PRs.</li>
+<li><code>apps/desktop/src/app/boot.tsx:25-27,112-116</code>: one client is created before authentication restoration; the ready path starts polling before rendering the app.</li>
+</ul>
+<h2>Chosen approach</h2>
+<p>Remove the Starred source and retire its cached group/PR copies. Hiding only navigation would leave API traffic running. Adding an opt-in setting would add UI and state beyond this request.</p>
+<h3>1. Remove discovery and prevent every starred polling path</h3>
+<ul>
+<li>Remove <code>/user/starred</code> enumeration, Starred group creation, and starred-derived repository upserts from <code>sync/groups.ts</code>.</li>
+<li>Preserve organization/team pagination, cached membership fallback, inaccessible-team handling, and personal involvement query semantics.</li>
+<li>Exclude legacy Starred groups from background registration and make direct watch/refresh of a legacy Starred group perform no network work. Keep a query-level guard so legacy cached groups cannot generate searches.</li>
+<li>Retain the legacy <code>starred</code> group discriminator only where needed to recognize persisted data; do not introduce a schema reset or a new setting.</li>
+</ul>
+<h3>2. Retire old cached rows before displaying the app</h3>
+<ul>
+<li>Add a small core initialization operation that preloads groups and PRs, removes the legacy Starred group and only PR copies whose <code>groupId</code> is <code>starred</code>, and awaits persistence.</li>
+<li>Invoke it in the existing client creation promise before authenticated startup or offline fallback can render or start polling. Use existing collection APIs; repeated execution is harmless.</li>
+<li>Preserve organization/team/personal copies of overlapping PRs, repository metadata, repository resource caches, PR detail/file caches, drafts, and Inbox preferences. Shared repository metadata does not itself initiate polling.</li>
+<li>The existing group-driven sidebar, dashboard, and command palette should cease offering Starred once initialization finishes. Check legacy group routes safely fall back or show the existing missing-group state without requests.</li>
+<li>Keep current startup error handling if local cleanup cannot persist; do not conceal a failed cleanup or delete the database.</li>
+</ul>
+<h3>3. Prove behavior and record the change</h3>
+<ul>
+<li>Discovery tests: no starred endpoint requests; member organizations and teams remain complete across pages and retained on unchanged responses; starred repositories are not inserted via discovery.</li>
+<li>Core client tests: seed legacy Starred group and PR rows alongside overlapping personal/organization copies; initialization removes only retired copies and is idempotent. Preserve preferences and drafts. Exercise startup while discovery is delayed/fails and direct watch/refresh; assert zero starred-origin GraphQL searches.</li>
+<li>Query tests: legacy Starred group yields no queries; retain team repo-query splitting coverage using team fixtures.</li>
+<li>Browser regression: after startup/reload, Starred is absent, personal and organization/team navigation works, and request recording contains no starred REST or starred-only PR search calls. Use mocked GitHub traffic to avoid consuming the user's API allowance.</li>
+<li>Add a desktop patch changeset. Run repository lint, typecheck, unit tests, and desktop browser tests as required by the web CI job. Report actual results and any unavailable gates; native code is outside this change.</li>
+</ul>
+<h2>Acceptance and limits</h2>
+<p>Zero automatic <code>/user/starred</code> requests or PR searches caused solely by starring, including cached startup and manual refresh of an old group. Organization and personal involvement feeds remain functional. No user drafts/preferences or unrelated caches are cleared.</p>
+<p>This reduces requests; the exact savings depend on starred repo count, query pagination, and polling duration. No live quota measurement or API calls are needed for validation. Explicitly opening a repository or PR continues to fetch its requested content. Broader polling optimization, team/org deduplication, repository browsing features, and release/publishing are outside scope.</p>
+<h2>Review</h2>
+<p>Approve this scope in Plannotator before implementation. Record the structured response in <code>review.json</code>. If the strict owner/member boundary is desired, revise both this Markdown and its generated HTML before re-review.</p>
+
+</main><script>document.getElementById('theme').addEventListener('click',()=>{const dark=document.documentElement.classList.toggle('dark');try{localStorage.setItem('plan-theme',dark?'dark':'light')}catch{}});</script></body></html>
