@@ -59,10 +59,117 @@ test("deduplicates requests and serves a fresh revisit without fetching", async 
   const cache = new RepositoryCache(createCollections().repositoryResources)
   const fetcher = vi.fn(async () => "saved")
   const resource = cache.resource(key, fetcher)
-  await Promise.all([resource.load(), resource.load()])
+  await Promise.all([resource.load(), resource.load({ force: true })])
   await resource.load()
   expect(fetcher).toHaveBeenCalledTimes(1)
   expect(resource.snapshot()).toMatchObject({ loaded: true, data: "saved", persisted: false })
+})
+
+test("a forced refresh waits for a settled response to finish persistence", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = createCollections(database.open()).repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    const persistenceStarted = deferred<void>()
+    const finishPersistence = deferred<void>()
+    const upsert = rows.upsert
+    let gatePersistence = true
+    rows.upsert = async (values) => {
+      if (gatePersistence) {
+        gatePersistence = false
+        persistenceStarted.resolve()
+        await finishPersistence.promise
+      }
+      await upsert(values)
+    }
+    let fetchCount = 0
+    const fetcher = vi.fn(async () => `response ${++fetchCount}`)
+    const resource = cache.resource(key, fetcher)
+
+    const initial = resource.load()
+    await persistenceStarted.promise
+    expect(resource.snapshot()).toMatchObject({ loaded: true, refreshing: false, persisted: false })
+    const refresh = resource.load({ force: true })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    finishPersistence.resolve()
+    await Promise.all([initial, refresh])
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(resource.snapshot()).toMatchObject({ loaded: true, data: "response 2", persisted: true })
+  } finally {
+    database.close()
+  }
+})
+
+test("a forced refresh waiting on persistence is cancelled when its account is cleared", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = createCollections(database.open()).repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    const persistenceStarted = deferred<void>()
+    const finishPersistence = deferred<void>()
+    const upsert = rows.upsert
+    rows.upsert = async (values) => {
+      persistenceStarted.resolve()
+      await finishPersistence.promise
+      await upsert(values)
+    }
+    const fetcher = vi.fn(async () => "saved")
+    const resource = cache.resource(key, fetcher)
+    const initial = resource.load()
+    await persistenceStarted.promise
+    const refresh = resource.load({ force: true })
+    const clear = cache.clearAccount("yi")
+
+    finishPersistence.resolve()
+    await Promise.all([initial, refresh, clear])
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(resource.snapshot()).toMatchObject({ loaded: false, refreshing: false })
+    expect(rows.collection.size).toBe(0)
+  } finally {
+    database.close()
+  }
+})
+
+test("retry during access-denied cleanup starts after the failed request settles", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = createCollections(database.open()).repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    let fetchCount = 0
+    const fetcher = vi.fn(async () => {
+      fetchCount += 1
+      if (fetchCount === 2) throw new GitHubError(403, "forbidden")
+      return `response ${fetchCount}`
+    })
+    const resource = cache.resource(key, fetcher)
+    await resource.load()
+
+    const removalStarted = deferred<void>()
+    const finishRemoval = deferred<void>()
+    const remove = rows.remove
+    rows.remove = async (keys) => {
+      removalStarted.resolve()
+      await finishRemoval.promise
+      await remove(keys)
+    }
+    const failed = resource.retry()
+    await removalStarted.promise
+    expect(resource.snapshot()).toMatchObject({
+      loaded: false,
+      refreshing: false,
+      error: expect.any(GitHubError),
+    })
+    const retry = resource.retry()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    finishRemoval.resolve()
+    await Promise.all([failed, retry])
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(resource.snapshot()).toMatchObject({ loaded: true, data: "response 3", persisted: true })
+  } finally {
+    database.close()
+  }
 })
 
 test("rehydrates a persisted snapshot from a reopened SQLite database", async () => {
