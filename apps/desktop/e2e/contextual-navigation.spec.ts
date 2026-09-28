@@ -330,14 +330,15 @@ test("partial repository rows do not erase a settled PR's check snapshot", async
     .getByRole("button", { name: "acme/api #7: Speed up the diff view", exact: true })
     .click()
   await page.getByRole("button", { name: "Settle locally", exact: true }).click()
-  await expect(page.getByRole("button", { name: /^Settled 1/ })).toBeVisible()
+  await expect(
+    page.getByRole("list", { name: "Settled pull requests" }).locator("[data-pull-id]"),
+  ).toHaveCount(1)
   options.pullCount = 0
   await page.getByRole("button", { name: "Refresh inbox" }).click()
   await expect(
     page.getByRole("button", { name: "Refresh inbox" }).locator(".animate-spin"),
   ).toHaveCount(0)
   await page.goto("/#/repo/acme/api?tab=pulls")
-  await page.getByRole("button", { name: /^Settled 1/ }).click()
   await expect(
     page
       .getByRole("list", { name: "Settled pull requests" })
@@ -354,5 +355,7 @@ test("partial repository rows do not erase a settled PR's check snapshot", async
       .getByRole("list", { name: "Active pull requests" })
       .getByText("Speed up the diff view", { exact: true }),
   ).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^Settled 1/ })).toBeVisible()
+  await expect(
+    page.getByRole("list", { name: "Settled pull requests" }).locator("[data-pull-id]"),
+  ).toHaveCount(1)
 })

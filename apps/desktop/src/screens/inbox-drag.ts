@@ -22,6 +22,7 @@ export function useInboxDrag({
   setDraggingId,
   setDragOverId,
   setDropPosition,
+  onSnoozeDrop,
   runMutation,
 }: {
   entries: InboxPull[]
@@ -35,6 +36,7 @@ export function useInboxDrag({
   setDraggingId: (id: string | null) => void
   setDragOverId: (id: string | null) => void
   setDropPosition: (position: DropPosition | null) => void
+  onSnoozeDrop: (pull: PullRequest) => void
   runMutation: RunMutation
 }) {
   const { client, viewer } = useSession()
@@ -77,8 +79,13 @@ export function useInboxDrag({
       return
     }
     const sectionTarget = overId.startsWith("inbox-drop:")
-      ? (overId.split(":")[1] as "pinned" | "active" | "settled")
+      ? (overId.split(":")[1] as "pinned" | "active" | "snoozed" | "settled")
       : null
+    if (sectionTarget === "snoozed") {
+      setDropPosition(null)
+      if (source.state !== "snoozed") onSnoozeDrop(source.pull)
+      return
+    }
     const overEntry = entries.find((entry) => entry.pull.id === overId)
     const targetSection =
       sectionTarget ??
@@ -143,7 +150,7 @@ export function useInboxDrag({
     }
     const target = entries.find((entry) => entry.pull.id === overId)
     const targetSection = overId.startsWith("inbox-drop:")
-      ? (overId.split(":")[1] as "pinned" | "active" | "settled")
+      ? (overId.split(":")[1] as "pinned" | "active" | "snoozed" | "settled")
       : target?.state === "settled"
         ? "settled"
         : target?.state === "snoozed"
@@ -161,7 +168,9 @@ export function useInboxDrag({
           ? pinnedEntries
           : targetSection === "active"
             ? activeEntries
-            : settledEntries
+            : targetSection === "snoozed"
+              ? []
+              : settledEntries
       setDropPosition({
         section: targetSection,
         ...(targetEntries[0] ? { beforePullId: targetEntries[0].pull.id } : {}),
@@ -200,20 +209,22 @@ function getInboxDragLabel(
           : target?.state
       })()
   const verb =
-    over === "settled"
-      ? "Settle locally"
-      : over === "pinned"
-        ? entry.preference?.pinOrder !== undefined
-          ? "Reorder pinned"
-          : "Pin"
-        : over === "active"
-          ? entry.state === "snoozed"
-            ? "Wake"
-            : entry.state === "settled"
-              ? "Restore"
-              : entry.preference?.pinOrder !== undefined
-                ? "Unpin"
-                : "Move to Active"
-          : "Move"
+    over === "snoozed"
+      ? "Snooze"
+      : over === "settled"
+        ? "Settle locally"
+        : over === "pinned"
+          ? entry.preference?.pinOrder !== undefined
+            ? "Reorder pinned"
+            : "Pin"
+          : over === "active"
+            ? entry.state === "snoozed"
+              ? "Wake"
+              : entry.state === "settled"
+                ? "Restore"
+                : entry.preference?.pinOrder !== undefined
+                  ? "Unpin"
+                  : "Move to Active"
+            : "Move"
   return `${verb} · ${entry.pull.repo} #${entry.pull.number}`
 }

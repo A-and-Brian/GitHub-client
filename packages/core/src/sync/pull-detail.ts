@@ -230,15 +230,23 @@ export function toPullRequestDetail(repo: string, repository: Node): PullRequest
   }
 }
 
+export async function fetchPullDetail(
+  graphql: GraphQLClient,
+  repo: string,
+  number: number,
+): Promise<PullRequestDetail> {
+  const [owner, name] = repo.split("/")
+  const data = await graphql.query<{ repository: Node }>(PULL_DETAIL, { owner, name, number })
+  return toPullRequestDetail(repo, data.repository)
+}
+
 export async function syncPullDetail(
   graphql: GraphQLClient,
   repo: string,
   number: number,
   details: SyncedCollection<PullRequestDetail, string>,
 ): Promise<void> {
-  const [owner, name] = repo.split("/")
-  const data = await graphql.query<{ repository: Node }>(PULL_DETAIL, { owner, name, number })
-  await details.upsert([toPullRequestDetail(repo, data.repository)])
+  await details.upsert([await fetchPullDetail(graphql, repo, number)])
 }
 
 interface RestFile {
@@ -258,20 +266,28 @@ export async function syncPullFiles(
   headOid: string,
   files: SyncedCollection<PullRequestFiles, string>,
 ): Promise<void> {
+  const result = await fetchPullFiles(rest, repo, number, headOid)
+  if (result) await files.upsert([result])
+}
+
+export async function fetchPullFiles(
+  rest: RestClient,
+  repo: string,
+  number: number,
+  headOid: string,
+): Promise<PullRequestFiles | null> {
   const result = await rest.pollAll<RestFile>(`/repos/${repo}/pulls/${number}/files`)
-  if (result.status === "not-modified") return
-  await files.upsert([
-    {
-      key: prKey(repo, number),
-      headOid,
-      files: result.data.map((f) => ({
-        filename: f.filename,
-        previousFilename: f.previous_filename ?? null,
-        status: f.status,
-        additions: f.additions,
-        deletions: f.deletions,
-        patch: f.patch ?? null,
-      })),
-    },
-  ])
+  if (result.status === "not-modified") return null
+  return {
+    key: prKey(repo, number),
+    headOid,
+    files: result.data.map((f) => ({
+      filename: f.filename,
+      previousFilename: f.previous_filename ?? null,
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      patch: f.patch ?? null,
+    })),
+  }
 }

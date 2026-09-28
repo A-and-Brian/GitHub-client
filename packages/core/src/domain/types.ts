@@ -60,6 +60,12 @@ export interface PullRequest {
   updatedAt: string
   /** Local time when this group copy was fetched. */
   syncedAt?: string
+  /** Last authoritative lifecycle observation; absent on legacy cached rows. */
+  stateObservedAt?: string
+  /** GitHub lifecycle state. Missing legacy values are treated as OPEN. */
+  state?: "OPEN" | "CLOSED" | "MERGED"
+  /** Whether this row includes an authoritative checks snapshot. */
+  checkSnapshotComplete?: boolean
   /** Latest known commit OID; older cached rows may not have this field. */
   headOid?: string
   headRef: string

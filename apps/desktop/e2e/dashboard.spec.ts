@@ -415,6 +415,7 @@ test("repository pull pages retry the failed page and retain rows and focus duri
     inbox.getByRole("button", { name: "acme/handbook #99: Saved pull 99", exact: true }),
   ).toBeVisible()
   await expect(inbox.getByTestId("repository-cache-status")).toHaveAttribute("data-saved", "true")
+  await expect(inbox).toHaveAttribute("data-inbox-ready", "true")
   await first.focus()
   const before = await first.boundingBox()
   holdRefresh = true

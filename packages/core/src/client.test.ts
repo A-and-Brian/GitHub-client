@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { expect, test, vi } from "vitest"
-import { GitHubClient } from "./client"
-import type { PullRequest } from "./domain/types"
+import { GitHubClient, jobKeys } from "./client"
+import type { PullRequest, PullRequestDetail } from "./domain/types"
 import type { Platform } from "./platform"
 import { fakeGitHub } from "./test/fake-github"
 import { tempDatabase } from "./test/persistence"
@@ -96,6 +96,114 @@ test("sign-out forgets the token and deletes cached data and drafts", async () =
   expect(client.collections.repos.collection.size).toBe(0)
   expect(client.collections.inboxPreferences.collection.size).toBe(0)
   expect(client.collections.drafts.size).toBe(0)
+})
+
+function mergeDetail(): PullRequestDetail {
+  return {
+    key: "acme/api#1",
+    id: "PR_1",
+    repo: "acme/api",
+    number: 1,
+    title: "Change one",
+    url: "https://github.com/acme/api/pull/1",
+    state: "OPEN",
+    isDraft: false,
+    author: { login: "octo", avatarUrl: "" },
+    bodyHTML: "",
+    createdAt: pull.createdAt,
+    headRef: pull.headRef,
+    headOid: "head-1",
+    baseRef: pull.baseRef,
+    baseOid: "base-1",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "REVIEW_REQUIRED",
+    mergeMethods: ["merge"],
+    viewerCanUpdate: true,
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    timeline: [],
+    threads: [],
+    checks: [],
+  }
+}
+
+test("confirmed merge settles the current account immediately; rejected merge does not", async () => {
+  const github = fakeGitHub([{ method: "PUT", path: "/repos/acme/api/pulls/1/merge", status: 204 }])
+  const client = new GitHubClient({ ...platform("stored", null), fetch: github.fetch })
+  await client.auth.restore()
+  await client.collections.pulls.upsert([pull])
+  await client.collections.pullDetails.upsert([mergeDetail()])
+  await client.ensureInboxOrder("Yi", [{ pull, state: "active" }])
+
+  expect(await client.merge("acme/api", 1, "merge", "Yi")).toEqual({})
+  expect(client.collections.pulls.collection.get(pull.key)?.state).toBe("MERGED")
+  expect(client.collections.inboxPreferences.collection.get("yi:PR_1")).toMatchObject({
+    accountLogin: "yi",
+    state: "settled",
+    terminalState: "MERGED",
+  })
+
+  const rejected = fakeGitHub([
+    {
+      method: "PUT",
+      path: "/repos/acme/api/pulls/1/merge",
+      status: 409,
+      body: { message: "head moved" },
+    },
+  ])
+  const second = new GitHubClient({ ...platform("stored", null), fetch: rejected.fetch })
+  await second.auth.restore()
+  await second.collections.pulls.upsert([pull])
+  await second.collections.pullDetails.upsert([mergeDetail()])
+  await second.ensureInboxOrder("yi", [{ pull, state: "active" }])
+  await expect(second.merge("acme/api", 1, "merge", "yi")).rejects.toThrow("head moved")
+  expect(second.collections.pulls.collection.get(pull.key)?.state ?? "OPEN").toBe("OPEN")
+  expect(second.collections.inboxPreferences.collection.get("yi:PR_1")?.state).toBe("active")
+})
+
+test("merge reports local save failures and exposes its confirmed state in memory", async () => {
+  const db = tempDatabase()
+  try {
+    const github = fakeGitHub([
+      { method: "PUT", path: "/repos/acme/api/pulls/1/merge", status: 204 },
+    ])
+    const client = new GitHubClient({ ...platform("stored", null, db.open()), fetch: github.fetch })
+    await client.auth.restore()
+    await client.collections.pulls.upsert([pull])
+    await client.collections.pullDetails.upsert([mergeDetail()])
+    await client.ensureInboxOrder("yi", [{ pull, state: "active" }])
+    const connection = new Database(db.file)
+    const { table_name: table } = connection
+      .prepare("SELECT table_name FROM collection_registry WHERE collection_id = ?")
+      .get("inbox-preferences") as { table_name: string }
+    const { table_name: pullTable } = connection
+      .prepare("SELECT table_name FROM collection_registry WHERE collection_id = ?")
+      .get("pulls") as { table_name: string }
+    connection.exec(
+      `CREATE TRIGGER fail_inbox_update BEFORE INSERT ON "${table}" BEGIN SELECT RAISE(ABORT, 'inbox save failed'); END;`,
+    )
+    connection.exec(
+      `CREATE TRIGGER fail_pull_update BEFORE INSERT ON "${pullTable}" BEGIN SELECT RAISE(ABORT, 'pull save failed'); END;`,
+    )
+
+    let lifecycleNotified = false
+    const unsubscribe = client.subscribeInboxLifecycle(() => {
+      lifecycleNotified = true
+    })
+    const result = await client.merge("acme/api", 1, "merge", "yi")
+    expect(result.inboxError).toBeInstanceOf(Error)
+    expect((result.inboxError as Error).message).toContain("pull save failed")
+    expect(github.requests.filter((request) => request.method === "PUT")).toHaveLength(1)
+    expect(client.collections.pulls.collection.get(pull.key)?.state ?? "OPEN").toBe("OPEN")
+    expect(client.applyConfirmedInboxLifecycles([pull])[0]?.state).toBe("MERGED")
+    expect(lifecycleNotified).toBe(true)
+    unsubscribe()
+    connection.close()
+  } finally {
+    db.close()
+  }
 })
 
 test("pull hover prefetch joins the page sync and skips a completed cache", async () => {
@@ -412,4 +520,139 @@ test("approval failure does not refresh runs or jobs", async () => {
   expect(requests).toEqual([{ method: "POST", path: "/repos/acme/api/actions/runs/42/approve" }])
   stopRuns()
   stopJobs()
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+test("a slow group search leaves local settlement responsive and cannot restore data after sign-out", async () => {
+  const started = deferred<void>()
+  const response = deferred<Response>()
+  const client = new GitHubClient({
+    ...platform("stored", null),
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/graphql") && String(init?.body).includes("SearchPulls")) {
+        started.resolve()
+        return response.promise
+      }
+      return new Response("{}", { status: 404 })
+    },
+  })
+  await client.auth.restore()
+  await client.collections.groups.upsert([
+    { id: "org:acme", kind: "org", name: "acme", org: "acme", order: 0 },
+  ])
+  await client.collections.pulls.upsert([pull])
+  await client.ensureInboxOrder("yi", [{ pull, state: "active" }])
+  const release = client.watchGroup("org:acme")
+  const refresh = client.refresh(jobKeys.groupPulls("org:acme"))
+  await started.promise
+
+  await client.settleInboxPull("yi", pull)
+  expect(client.collections.inboxPreferences.collection.get("yi:PR_1")?.state).toBe("settled")
+  await client.signOut()
+  response.resolve(
+    new Response(
+      JSON.stringify({
+        data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
+      }),
+    ),
+  )
+  await refresh
+  release()
+  expect(client.collections.pulls.collection.size).toBe(0)
+  expect(client.collections.inboxPreferences.collection.size).toBe(0)
+})
+
+test("a stale repository open page cannot undo closure, while a later one reopens it", async () => {
+  const client = new GitHubClient(platform("stored", null))
+  await client.auth.restore()
+  const closedAt = "2026-09-28T11:00:00.000Z"
+  const closed = { ...pull, state: "CLOSED" as const, stateObservedAt: closedAt }
+  await client.collections.pulls.upsert([closed])
+  await client.settleInboxPull("yi", closed)
+
+  await client.syncRepositoryInbox("yi", "acme/api", [{ ...pull, state: "OPEN" }], {
+    complete: false,
+    observedAt: "2026-09-28T10:00:00.000Z",
+  })
+  expect(client.collections.pulls.collection.get("repo:acme/api:PR_1")?.state).toBe("CLOSED")
+
+  await client.syncRepositoryInbox("yi", "acme/api", [{ ...pull, state: "OPEN" }], {
+    complete: false,
+    observedAt: "2026-09-28T12:00:00.000Z",
+  })
+  expect(client.collections.pulls.collection.get("repo:acme/api:PR_1")).toMatchObject({
+    state: "OPEN",
+    stateObservedAt: "2026-09-28T12:00:00.000Z",
+  })
+  expect(client.collections.inboxPreferences.collection.get("yi:PR_1")?.state).toBe("active")
+})
+
+test("detail and file requests leave local actions responsive and discard a signed-out file response", async () => {
+  const detailStarted = deferred<void>()
+  const detailResponse = deferred<Response>()
+  const filesStarted = deferred<void>()
+  const filesResponse = deferred<Response>()
+  const client = new GitHubClient({
+    ...platform("stored", null),
+    fetch: async (input, init) => {
+      const url = String(input)
+      if (url.endsWith("/graphql") && String(init?.body).includes("PullDetail")) {
+        detailStarted.resolve()
+        return detailResponse.promise
+      }
+      if (url.includes("/pulls/1/files")) {
+        filesStarted.resolve()
+        return filesResponse.promise
+      }
+      return new Response("{}", { status: 404 })
+    },
+  })
+  await client.auth.restore()
+  await client.collections.pulls.upsert([pull])
+  await client.ensureInboxOrder("yi", [{ pull, state: "active" }])
+  const prefetch = client.prefetchPull("acme/api", 1)
+  await detailStarted.promise
+  await client.settleInboxPull("yi", pull)
+  expect(client.collections.inboxPreferences.collection.get("yi:PR_1")?.state).toBe("settled")
+
+  const detail = mergeDetail()
+  detailResponse.resolve(
+    new Response(
+      JSON.stringify({
+        data: {
+          repository: {
+            mergeCommitAllowed: true,
+            squashMergeAllowed: true,
+            rebaseMergeAllowed: true,
+            pullRequest: {
+              ...detail,
+              headRefName: detail.headRef,
+              headRefOid: detail.headOid,
+              baseRefName: detail.baseRef,
+              baseRefOid: detail.baseOid,
+              timelineItems: { nodes: [] },
+              reviewThreads: { nodes: [] },
+              commits: { nodes: [] },
+            },
+          },
+        },
+      }),
+    ),
+  )
+  await filesStarted.promise
+  await client.restoreInboxPull("yi", pull)
+  expect(client.collections.inboxPreferences.collection.get("yi:PR_1")?.state).toBe("active")
+
+  await client.signOut()
+  filesResponse.resolve(new Response("[]"))
+  await prefetch
+  expect(client.collections.pullDetails.collection.size).toBe(0)
+  expect(client.collections.pullFiles.collection.size).toBe(0)
 })

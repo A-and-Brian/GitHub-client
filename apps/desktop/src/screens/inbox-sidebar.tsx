@@ -2,15 +2,13 @@ import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import type { InboxPull } from "@github-client/core"
 import { Button } from "@github-client/ui/components/button"
 import { Fragment, type ReactNode } from "react"
-import { InboxDropHeader, InboxShelf } from "./inbox-parts"
+import { InboxDropHeader } from "./inbox-parts"
 
 export type DropPosition = {
-  section: "pinned" | "active" | "settled"
+  section: "pinned" | "active" | "snoozed" | "settled"
   beforePullId?: string
   afterPullId?: string
 }
-
-type ShelfState = { snoozed: boolean; settled: boolean }
 
 export function InboxSections({
   failures,
@@ -20,16 +18,12 @@ export function InboxSections({
   activeEntries,
   snoozedEntries,
   settledEntries,
-  visibleSnoozed,
   visibleSettledRows,
   visibleSettledCount,
-  selectedSnoozed,
-  selectedSettled,
-  expanded,
   dragDisabled,
+  dragging,
   dropPosition,
   renderRow,
-  onToggleShelf,
   onShowMoreSettled,
 }: {
   failures: boolean
@@ -39,30 +33,15 @@ export function InboxSections({
   activeEntries: InboxPull[]
   snoozedEntries: InboxPull[]
   settledEntries: InboxPull[]
-  visibleSnoozed: InboxPull[]
   visibleSettledRows: InboxPull[]
   visibleSettledCount: number
-  selectedSnoozed: boolean
-  selectedSettled: boolean
-  expanded: ShelfState
   dragDisabled: boolean
+  dragging: boolean
   dropPosition: DropPosition | null
   renderRow: (entry: InboxPull) => ReactNode
-  onToggleShelf: (shelf: "snoozed" | "settled") => void
   onShowMoreSettled: () => void
 }) {
-  const gap = (section: DropPosition["section"], edge?: "before" | "after", id?: string) => {
-    const position = dropPosition
-    if (!position || position.section !== section) return null
-    const matches = !id
-      ? !position.beforePullId && !position.afterPullId
-      : edge === "before"
-        ? position.beforePullId === id
-        : position.afterPullId === id
-    return matches ? (
-      <li aria-hidden="true" className="mx-2 my-1 h-2 rounded bg-primary/30" />
-    ) : null
-  }
+  const visibleArchive = snoozedEntries.length > 0 || visibleSettledRows.length > 0
 
   return (
     <>
@@ -84,110 +63,121 @@ export function InboxSections({
           </section>
         ) : (
           <>
-            <section aria-label="Pinned pull requests">
-              <InboxDropHeader
-                section="pinned"
-                title="Pinned"
-                count={pinnedEntries.length}
-                disabled={dragDisabled}
-              />
-              <SortableContext
-                items={pinnedEntries.map((entry) => entry.pull.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                <ul aria-label="Pinned pull requests">
-                  {pinnedEntries.map((entry) => (
-                    <Fragment key={entry.pull.id}>
-                      {gap("pinned", "before", entry.pull.id)}
-                      {renderRow(entry)}
-                      {gap("pinned", "after", entry.pull.id)}
-                    </Fragment>
-                  ))}
-                  {gap("pinned")}
-                  {pinnedEntries.length === 0 && (
-                    <li className="px-3 py-2 text-xs text-muted-foreground">No pinned PRs</li>
-                  )}
-                </ul>
-              </SortableContext>
-            </section>
-            <section aria-label="Active pull requests">
-              <InboxDropHeader
-                section="active"
-                title="Active"
-                count={activeEntries.length}
-                disabled={dragDisabled}
-              />
-              <SortableContext
-                items={activeEntries.map((entry) => entry.pull.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                <ul aria-label="Active pull requests">
-                  {activeEntries.map((entry) => (
-                    <Fragment key={entry.pull.id}>
-                      {gap("active", "before", entry.pull.id)}
-                      {renderRow(entry)}
-                      {gap("active", "after", entry.pull.id)}
-                    </Fragment>
-                  ))}
-                  {gap("active")}
-                  {activeEntries.length === 0 && (
-                    <li className="px-3 py-2 text-xs text-muted-foreground">
-                      No active pull requests.
-                    </li>
-                  )}
-                </ul>
-              </SortableContext>
-            </section>
+            <InboxSection
+              section="pinned"
+              title="Pinned"
+              entries={pinnedEntries}
+              dragging={dragging}
+              dragDisabled={dragDisabled}
+              dropPosition={dropPosition}
+              renderRow={renderRow}
+            />
+            <InboxSection
+              section="active"
+              title="Active"
+              entries={activeEntries}
+              dragging={dragging}
+              dragDisabled={dragDisabled}
+              dropPosition={dropPosition}
+              renderRow={renderRow}
+            />
           </>
         )}
       </div>
-      {!failures && (
-        <div className="inbox-archive min-h-0 max-h-[40%] shrink-0 overflow-y-auto border-t">
-          <InboxShelf
+      {!failures && (visibleArchive || dragging) && (
+        <div
+          className={`inbox-archive min-h-0 max-h-[40%] shrink-0 overflow-y-auto ${visibleArchive ? "border-t" : ""}`}
+        >
+          <InboxSection
+            section="snoozed"
             title="Snoozed"
-            count={snoozedEntries.length}
-            expanded={expanded.snoozed}
-            showSelectedCollapsed={selectedSnoozed}
-            onToggle={() => onToggleShelf("snoozed")}
-          >
-            <SortableContext
-              items={visibleSnoozed.map((entry) => entry.pull.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <ul aria-label="Snoozed pull requests">{visibleSnoozed.map(renderRow)}</ul>
-            </SortableContext>
-          </InboxShelf>
-          <InboxShelf
+            entries={snoozedEntries}
+            dragging={dragging}
+            dragDisabled={dragDisabled}
+            dropPosition={dropPosition}
+            renderRow={renderRow}
+          />
+          <InboxSection
+            section="settled"
             title="Settled"
+            entries={visibleSettledRows}
             count={settledEntries.length}
-            expanded={expanded.settled}
-            showSelectedCollapsed={selectedSettled}
-            onToggle={() => onToggleShelf("settled")}
-            dropDisabled={dragDisabled}
+            dragging={dragging}
+            dragDisabled={dragDisabled}
+            dropPosition={dropPosition}
+            renderRow={renderRow}
           >
-            <SortableContext
-              items={visibleSettledRows.map((entry) => entry.pull.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <ul aria-label="Settled pull requests">
-                {visibleSettledRows.map((entry) => (
-                  <Fragment key={entry.pull.id}>
-                    {gap("settled", "before", entry.pull.id)}
-                    {renderRow(entry)}
-                    {gap("settled", "after", entry.pull.id)}
-                  </Fragment>
-                ))}
-                {gap("settled")}
-              </ul>
-            </SortableContext>
-            {expanded.settled && settledEntries.length > visibleSettledCount && (
+            {settledEntries.length > visibleSettledCount && (
               <Button variant="ghost" size="sm" className="w-full" onClick={onShowMoreSettled}>
                 Show 25 more
               </Button>
             )}
-          </InboxShelf>
+          </InboxSection>
         </div>
       )}
     </>
+  )
+}
+
+function InboxSection({
+  section,
+  title,
+  entries,
+  count = entries.length,
+  dragging,
+  dragDisabled,
+  dropPosition,
+  renderRow,
+  children,
+}: {
+  section: DropPosition["section"]
+  title: string
+  entries: InboxPull[]
+  count?: number
+  dragging: boolean
+  dragDisabled: boolean
+  dropPosition: DropPosition | null
+  renderRow: (entry: InboxPull) => ReactNode
+  children?: ReactNode
+}) {
+  const gap = (section: DropPosition["section"], edge?: "before" | "after", id?: string) => {
+    const position = dropPosition
+    if (!position || position.section !== section) return null
+    const matches = !id
+      ? !position.beforePullId && !position.afterPullId
+      : edge === "before"
+        ? position.beforePullId === id
+        : position.afterPullId === id
+    return matches ? (
+      <li aria-hidden="true" className="mx-2 my-1 h-2 rounded bg-primary/30" />
+    ) : null
+  }
+
+  if (section !== "active" && entries.length === 0 && !dragging) return null
+  return (
+    <section aria-label={`${title} pull requests`}>
+      {(section === "active" || dragging) && (
+        <InboxDropHeader section={section} title={title} count={count} disabled={dragDisabled} />
+      )}
+      <SortableContext
+        items={entries.map((entry) => entry.pull.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <ul aria-label={`${title} pull requests`}>
+          {entries.map((entry) => (
+            <Fragment key={entry.pull.id}>
+              {gap(section, "before", entry.pull.id)}
+              {renderRow(entry)}
+              {gap(section, "after", entry.pull.id)}
+            </Fragment>
+          ))}
+          {gap(section)}
+          {section === "active" && entries.length === 0 && (
+            <li className="px-3 py-2 text-xs text-muted-foreground">No active pull requests.</li>
+          )}
+        </ul>
+      </SortableContext>
+      {children}
+    </section>
   )
 }

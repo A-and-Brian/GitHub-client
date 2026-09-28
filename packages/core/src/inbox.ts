@@ -17,6 +17,9 @@ export interface InboxPreference {
     reviewRequests: string[]
     failed: boolean
   }
+  /** Terminal GitHub lifecycle observed while this row was settled. */
+  terminalState?: "CLOSED" | "MERGED"
+  terminalObservedAt?: string
   changedAt: string
   /** Saved position in Active, retained while pinned or snoozed. */
   activeOrder?: number
@@ -95,11 +98,7 @@ export function deriveInboxPulls(
           .map((pull) => pull.id),
       )
     : null
-  const byPull = new Map<string, PullRequest>()
-  for (const pull of pulls) {
-    const prior = byPull.get(pull.id)
-    if (!prior || preferPull(pull, prior)) byPull.set(pull.id, pull)
-  }
+  const byPull = dedupePulls(pulls)
   const accountPreferences = new Map(
     preferences
       .filter((preference) => preference.accountLogin.toLowerCase() === currentLogin)
@@ -121,15 +120,43 @@ export function deriveInboxPulls(
     })
     .map((pull) => {
       const preference = accountPreferences.get(pull.id)
+      const terminal = isEffectivelyTerminal(pull, preference)
       return {
-        pull,
-        state: effectiveState(preference, now),
+        pull:
+          terminal && !isTerminalState(pull.state)
+            ? {
+                ...pull,
+                state: preference?.terminalState ?? "CLOSED",
+                stateObservedAt: preference?.terminalObservedAt,
+              }
+            : pull,
+        state: terminal ? "settled" : effectiveState(preference, now),
         ...(preference ? { preference } : {}),
       }
     })
 }
 
+function isTerminalState(state: PullRequest["state"]): state is "CLOSED" | "MERGED" {
+  return state === "CLOSED" || state === "MERGED"
+}
+
 function preferPull(candidate: PullRequest, current: PullRequest): boolean {
+  const candidateState = candidate.state ?? "OPEN"
+  const currentState = current.state ?? "OPEN"
+  if (candidateState !== currentState) {
+    if (candidateState === "MERGED" || currentState === "MERGED") {
+      return candidateState === "MERGED"
+    }
+    const candidateStateTime = candidate.stateObservedAt
+      ? Date.parse(candidate.stateObservedAt)
+      : Number.NEGATIVE_INFINITY
+    const currentStateTime = current.stateObservedAt
+      ? Date.parse(current.stateObservedAt)
+      : Number.NEGATIVE_INFINITY
+    if (candidateStateTime !== currentStateTime) return candidateStateTime > currentStateTime
+    if (candidateStateTime !== Number.NEGATIVE_INFINITY) return candidateState === "CLOSED"
+    return candidateState === "CLOSED"
+  }
   const candidateSync = candidate.syncedAt
     ? Date.parse(candidate.syncedAt)
     : Number.NEGATIVE_INFINITY
@@ -140,6 +167,55 @@ function preferPull(candidate: PullRequest, current: PullRequest): boolean {
   // Prefer copies with useful current data when the sync times are equal.
   if (!current.headOid && candidate.headOid) return true
   return false
+}
+
+function dedupePulls(pulls: readonly PullRequest[]): Map<string, PullRequest> {
+  const copiesById = new Map<string, PullRequest[]>()
+  for (const pull of pulls) {
+    const copies = copiesById.get(pull.id) ?? []
+    copies.push(pull)
+    copiesById.set(pull.id, copies)
+  }
+  const byPull = new Map<string, PullRequest>()
+  for (const [id, copies] of copiesById) {
+    const lifecycle = copies.reduce((current, candidate) => {
+      const candidateState = candidate.state ?? "OPEN"
+      const currentState = current.state ?? "OPEN"
+      if (candidateState === "MERGED" || currentState === "MERGED") {
+        return candidateState === "MERGED" ? candidate : current
+      }
+      const candidateAt = candidate.stateObservedAt
+        ? Date.parse(candidate.stateObservedAt)
+        : Number.NEGATIVE_INFINITY
+      const currentAt = current.stateObservedAt
+        ? Date.parse(current.stateObservedAt)
+        : Number.NEGATIVE_INFINITY
+      if (candidateAt !== currentAt) return candidateAt > currentAt ? candidate : current
+      return candidateState === "CLOSED" ? candidate : current
+    })
+    const sameState = copies.filter(
+      (copy) => (copy.state ?? "OPEN") === (lifecycle.state ?? "OPEN"),
+    )
+    const snapshot = sameState.reduce((current, candidate) =>
+      preferPull(candidate, current) ? candidate : current,
+    )
+    byPull.set(id, { ...snapshot, stateObservedAt: lifecycle.stateObservedAt })
+  }
+  return byPull
+}
+
+function isEffectivelyTerminal(
+  pull: PullRequest,
+  preference: InboxPreference | undefined,
+): boolean {
+  if (pull.state === "MERGED" || preference?.terminalState === "MERGED") return true
+  if (pull.state === "CLOSED") return true
+  if (preference?.terminalState !== "CLOSED") return false
+  const openAt = pull.stateObservedAt ? Date.parse(pull.stateObservedAt) : Number.NaN
+  const closedAt = preference.terminalObservedAt
+    ? Date.parse(preference.terminalObservedAt)
+    : Date.parse(preference.changedAt)
+  return !(Number.isFinite(openAt) && openAt > closedAt)
 }
 
 function effectiveState(preference: InboxPreference | undefined, now: number): InboxState {
@@ -163,7 +239,7 @@ function snapshot(pull: PullRequest): InboxPreference["snapshot"] {
     reviewRequests: [
       ...new Set(pull.reviewRequests.map((request) => request.toLowerCase())),
     ].sort(),
-    failed: isFailure(pull),
+    failed: pull.checkSnapshotComplete === false ? false : isFailure(pull),
   }
 }
 
@@ -175,7 +251,7 @@ function createPreference(
   now = Date.now(),
 ): InboxPreference {
   const account = accountLogin.trim().toLowerCase()
-  return {
+  const preference: InboxPreference = {
     key: inboxPreferenceKey(account, pull.id),
     accountLogin: account,
     pullId: pull.id,
@@ -185,6 +261,20 @@ function createPreference(
     changedAt: new Date(now).toISOString(),
     activeOrder: undefined,
     pinOrder: undefined,
+  }
+  if (state === "settled" && (pull.state === "CLOSED" || pull.state === "MERGED")) {
+    preference.terminalState = pull.state
+    preference.terminalObservedAt = pull.stateObservedAt ?? new Date(now).toISOString()
+  }
+  return preference
+}
+
+function assertInboxPullCanMove(
+  pull: PullRequest,
+  target: "active" | "pinned" | "settled" | "snoozed",
+): void {
+  if ((pull.state === "CLOSED" || pull.state === "MERGED") && target !== "settled") {
+    throw new Error("Closed or merged pull requests stay in Settled")
   }
 }
 
@@ -203,6 +293,7 @@ export async function setInboxSnoozed(
   until: string,
   now = Date.now(),
 ): Promise<InboxPreference> {
+  assertInboxPullCanMove(pull, "snoozed")
   const account = accountLogin.trim().toLowerCase()
   const snoozedUntil = validateSnoozeExpiry(until, now)
   const stored = preferences.collection.get(inboxPreferenceKey(account, pull.id))
@@ -248,6 +339,9 @@ export async function restoreInboxPull(
   pull: PullRequest,
   now = Date.now(),
 ): Promise<InboxPreference> {
+  if (pull.state === "CLOSED" || pull.state === "MERGED") {
+    return settleInboxPull(preferences, accountLogin, pull, now)
+  }
   const account = accountLogin.trim().toLowerCase()
   const current = accountPreferences(preferences, account)
   const preference = createPreference(account, pull, "active", null, now)
@@ -341,6 +435,7 @@ export async function moveInboxPull(
   position: InboxDropPosition = {},
   now = Date.now(),
 ): Promise<InboxPreference> {
+  assertInboxPullCanMove(pull, section)
   const account = accountLogin.trim().toLowerCase()
   const current = accountPreferences(preferences, account)
   const prior = current.find((row) => row.pullId === pull.id)
@@ -399,6 +494,7 @@ export async function pinInboxPull(
   pull: PullRequest,
   now = Date.now(),
 ): Promise<InboxPreference> {
+  assertInboxPullCanMove(pull, "pinned")
   const account = accountLogin.trim().toLowerCase()
   const current = accountPreferences(preferences, account)
   const prior = current.find((row) => row.pullId === pull.id)
@@ -421,6 +517,9 @@ export async function unpinInboxPull(
   pull: PullRequest,
   now = Date.now(),
 ): Promise<InboxPreference> {
+  if (pull.state === "CLOSED" || pull.state === "MERGED") {
+    return settleInboxPull(preferences, accountLogin, pull, now)
+  }
   const account = accountLogin.trim().toLowerCase()
   const current = accountPreferences(preferences, account)
   const prior = current.find((row) => row.pullId === pull.id)
@@ -445,6 +544,9 @@ export async function wakeInboxPull(
   pull: PullRequest,
   now = Date.now(),
 ): Promise<InboxPreference> {
+  if (pull.state === "CLOSED" || pull.state === "MERGED") {
+    return settleInboxPull(preferences, accountLogin, pull, now)
+  }
   const account = accountLogin.trim().toLowerCase()
   const current = accountPreferences(preferences, account)
   const prior = current.find((row) => row.pullId === pull.id)
@@ -483,6 +585,8 @@ function plainInboxPreference(row: InboxPreference): InboxPreference {
       reviewRequests: [...row.snapshot.reviewRequests],
       failed: row.snapshot.failed,
     },
+    terminalState: row.terminalState,
+    terminalObservedAt: row.terminalObservedAt,
     changedAt: row.changedAt,
     activeOrder: row.activeOrder,
     pinOrder: row.pinOrder,
@@ -544,11 +648,7 @@ export async function reconcileInboxState(
   groups: readonly Group[] = [],
 ): Promise<void> {
   const account = accountLogin.trim().toLowerCase()
-  const byPull = new Map<string, PullRequest>()
-  for (const pull of pulls) {
-    const prior = byPull.get(pull.id)
-    if (!prior || preferPull(pull, prior)) byPull.set(pull.id, pull)
-  }
+  const byPull = dedupePulls(pulls)
   const updates: InboxPreference[] = []
   const reactivated: PullRequest[] = []
   const teamRequests = new Set(
@@ -563,6 +663,31 @@ export async function reconcileInboxState(
     if (preference.accountLogin.toLowerCase() !== account) continue
     const pull = byPull.get(preference.pullId)
     if (!pull) continue
+    if (pull.state === "CLOSED" || pull.state === "MERGED") {
+      const terminalState = preference.terminalState === "MERGED" ? "MERGED" : pull.state
+      if (
+        preference.state !== "settled" ||
+        preference.terminalState !== terminalState ||
+        preference.terminalObservedAt !== pull.stateObservedAt
+      ) {
+        updates.push({
+          ...createPreference(account, pull, "settled", null, now),
+          terminalState,
+          terminalObservedAt: pull.stateObservedAt ?? preference.terminalObservedAt,
+        })
+      }
+      continue
+    }
+    if (preference.terminalState === "MERGED") continue
+    if (preference.terminalState === "CLOSED") {
+      const reopenedAt = pull.stateObservedAt ? Date.parse(pull.stateObservedAt) : Number.NaN
+      const closedAt = preference.terminalObservedAt
+        ? Date.parse(preference.terminalObservedAt)
+        : Date.parse(preference.changedAt)
+      if (!(Number.isFinite(reopenedAt) && reopenedAt > closedAt)) continue
+      reactivated.push(pull)
+      continue
+    }
     if (
       preference.state === "settled" &&
       pull.syncedAt &&
@@ -584,6 +709,7 @@ export async function reconcileInboxState(
     }
     if (preference.state !== "settled") continue
     const current = snapshot(pull)
+    if (pull.checkSnapshotComplete === false) current.failed = preference.snapshot.failed
     const changedHead = Boolean(
       preference.snapshot.headOid &&
         current.headOid &&
