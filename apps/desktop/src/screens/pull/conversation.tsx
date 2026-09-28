@@ -19,7 +19,7 @@ import { UserAvatar } from "@/components/avatar"
 import { GitHubHtml } from "@/components/github-html"
 import { ReviewBadge } from "@/components/status"
 import { RelativeTime } from "@/components/time"
-import { ChecksContent } from "./checks"
+import { ChecksContent, type WorkflowApprovalProps } from "./checks"
 
 const REVIEW_TEXT: Record<string, string> = {
   APPROVED: "approved these changes",
@@ -33,10 +33,12 @@ export function ConversationTab({
   detail,
   onRunSelect,
   checksRailRef,
+  workflowApproval,
 }: {
   detail: PullRequestDetail
   onRunSelect?: (runId: number, jobId?: number) => void
   checksRailRef?: React.RefObject<HTMLElement | null>
+  workflowApproval?: WorkflowApprovalProps
 }) {
   const [owner, repo] = detail.repo.split("/") as [string, string]
   const unresolved = detail.threads.filter((t) => !t.isResolved)
@@ -88,7 +90,7 @@ export function ConversationTab({
           tabIndex={-1}
         >
           <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
-          <ChecksContent detail={detail} onRunSelect={onRunSelect} />
+          <ChecksContent detail={detail} onRunSelect={onRunSelect} {...workflowApproval} />
         </aside>
       </div>
     </div>

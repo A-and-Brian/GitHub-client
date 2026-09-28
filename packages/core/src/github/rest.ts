@@ -86,11 +86,16 @@ export class RestClient {
   async pollAll<T>(
     path: string,
     query?: Query,
-    options: { maxPages?: number; pick?: (page: unknown) => T[]; recencySorted?: boolean } = {},
+    options: {
+      maxPages?: number
+      pick?: (page: unknown) => T[]
+      recencySorted?: boolean
+      conditional?: boolean
+    } = {},
   ): Promise<GetResult<T[]>> {
     const pick = options.pick ?? ((page) => page as T[])
     const first = this.url(path, { per_page: 100, ...query })
-    const etag = this.etags.get(first)
+    const etag = options.conditional === false ? undefined : this.etags.get(first)
     let response = await this.send("GET", first, undefined, etag ? { "If-None-Match": etag } : {})
     const pollIntervalSec = numberHeader(response, "X-Poll-Interval")
     if (response.status === 304) return { status: "not-modified", pollIntervalSec }
@@ -104,8 +109,10 @@ export class RestClient {
       next = nextLink(response)
     }
     const singlePage = !nextLink(firstResponse)
-    if (firstEtag && (singlePage || options.recencySorted)) this.etags.set(first, firstEtag)
-    else this.etags.delete(first)
+    if (options.conditional !== false) {
+      if (firstEtag && (singlePage || options.recencySorted)) this.etags.set(first, firstEtag)
+      else this.etags.delete(first)
+    }
     return { status: "ok", data: items, pollIntervalSec }
   }
 

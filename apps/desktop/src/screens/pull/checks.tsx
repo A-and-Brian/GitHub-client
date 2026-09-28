@@ -1,20 +1,29 @@
-import type { Check, PullRequestDetail } from "@github-client/core"
+import type { Check, PendingWorkflowApproval, PullRequestDetail } from "@github-client/core"
 import { Link } from "@tanstack/react-router"
 import { ExternalLinkIcon } from "lucide-react"
 import { runState, StateIcon } from "@/components/status"
 import { openExternal } from "@/platform"
+import { ConfirmButton } from "../actions/confirm-button"
+
+export type WorkflowApprovalProps = {
+  approvalScopeKey?: string
+  approvalCandidates?: PendingWorkflowApproval[]
+  approvalError?: unknown
+  onApprove?: (candidates: PendingWorkflowApproval[]) => Promise<void>
+}
 
 export function ChecksTab({
   detail,
   onRunSelect,
+  ...approval
 }: {
   detail: PullRequestDetail
   onRunSelect?: (runId: number, jobId?: number) => void
-}) {
+} & WorkflowApprovalProps) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
-        <ChecksContent detail={detail} onRunSelect={onRunSelect} />
+        <ChecksContent detail={detail} onRunSelect={onRunSelect} {...approval} />
       </div>
     </div>
   )
@@ -23,10 +32,14 @@ export function ChecksTab({
 export function ChecksContent({
   detail,
   onRunSelect,
+  approvalCandidates,
+  approvalError,
+  onApprove,
+  approvalScopeKey,
 }: {
   detail: PullRequestDetail
   onRunSelect?: (runId: number, jobId?: number) => void
-}) {
+} & WorkflowApprovalProps) {
   const [owner, repo] = detail.repo.split("/") as [string, string]
   const groups = new Map<string, Check[]>()
   for (const check of detail.checks) {
@@ -35,11 +48,25 @@ export function ChecksContent({
   }
   if (detail.checks.length === 0) {
     return (
-      <p className="p-6 text-sm text-muted-foreground">No checks reported for the head commit.</p>
+      <div className="flex flex-col gap-4">
+        <WorkflowApprovalBanner
+          candidates={approvalCandidates}
+          error={approvalError}
+          scopeKey={approvalScopeKey}
+          onApprove={onApprove}
+        />
+        <p className="p-6 text-sm text-muted-foreground">No checks reported for the head commit.</p>
+      </div>
     )
   }
   return (
     <div className="flex flex-col gap-4">
+      <WorkflowApprovalBanner
+        candidates={approvalCandidates}
+        error={approvalError}
+        scopeKey={approvalScopeKey}
+        onApprove={onApprove}
+      />
       {[...groups].map(([name, checks]) => (
         <section key={name} className="rounded-lg border">
           <h2 className="break-words border-b bg-muted/40 px-3 py-2 text-sm font-medium">{name}</h2>
@@ -89,6 +116,64 @@ export function ChecksContent({
         </section>
       ))}
     </div>
+  )
+}
+
+function WorkflowApprovalBanner({
+  candidates = [],
+  error,
+  scopeKey,
+  onApprove,
+}: {
+  candidates?: PendingWorkflowApproval[]
+  error?: unknown
+  scopeKey?: string
+  onApprove?: (candidates: PendingWorkflowApproval[]) => Promise<void>
+}) {
+  if (candidates.length === 0 && !error) return null
+  const names = candidates.map(({ name }) => name)
+  return (
+    <section
+      aria-label="Workflow approval required"
+      className="flex min-w-0 flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3"
+    >
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold">
+          {candidates.length
+            ? `${candidates.length} workflow${candidates.length === 1 ? "" : "s"} awaiting approval`
+            : "Workflow approvals unavailable"}
+        </h3>
+        {candidates.length > 0 ? (
+          <ul className="mt-1 list-inside list-disc break-words text-xs text-muted-foreground">
+            {candidates.map(({ id, name }) => (
+              <li key={id}>{name}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="break-words text-xs text-muted-foreground">
+            Could not check for pending workflow approvals. Use Refresh to try again.
+          </p>
+        )}
+      </div>
+      {candidates.length > 0 && onApprove && (
+        <ConfirmButton
+          key={scopeKey}
+          title="Approve workflows to run"
+          description={`Approving ${names.map((name) => `“${name}”`).join(", ")} allows its PR code to execute.`}
+          confirmLabel={`Approve and run ${candidates.length}`}
+          success="Workflow approval requested"
+          size="xs"
+          action={() => onApprove(candidates)}
+        >
+          Approve and run
+        </ConfirmButton>
+      )}
+      {candidates.length > 0 && Boolean(error) && (
+        <p className="break-words text-xs text-destructive">
+          Approval status could not be refreshed. Use Refresh to try again.
+        </p>
+      )}
+    </section>
   )
 }
 

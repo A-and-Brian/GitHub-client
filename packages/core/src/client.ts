@@ -28,7 +28,13 @@ import {
 } from "./inbox"
 import type { Platform } from "./platform"
 import { RepositoryCache } from "./repository-cache"
-import { syncRunJobs, syncWorkflowRuns, syncWorkflows, toWorkflowRun } from "./sync/actions"
+import {
+  fetchPendingPullRequestApprovals as fetchPendingApprovals,
+  syncRunJobs,
+  syncWorkflowRuns,
+  syncWorkflows,
+  toWorkflowRun,
+} from "./sync/actions"
 import { syncGroups } from "./sync/groups"
 import { Poller } from "./sync/poller"
 import { syncPullDetail, syncPullFiles } from "./sync/pull-detail"
@@ -590,6 +596,10 @@ export class GitHubClient {
   async approveRun(repo: string, runId: number) {
     await workflows.approveRun(this.rest, repo, runId)
     await Promise.all([this.refresh(jobKeys.runs(repo)), this.refresh(jobKeys.runJobs(runId))])
+  }
+
+  fetchPendingPullRequestApprovals(repo: string, number: number, headSha: string) {
+    return fetchPendingApprovals(this.rest, repo, number, headSha)
   }
 
   /** One run, for runs older than the latest ones kept in `collections.workflowRuns`. */

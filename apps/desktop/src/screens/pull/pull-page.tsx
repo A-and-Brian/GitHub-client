@@ -1,4 +1,4 @@
-import { jobKeys, prKey } from "@github-client/core"
+import { jobKeys, type PendingWorkflowApproval, prKey } from "@github-client/core"
 import { Button } from "@github-client/ui/components/button"
 import { Tabs, TabsList, TabsTrigger } from "@github-client/ui/components/tabs"
 import { cn } from "@github-client/ui/lib/utils"
@@ -6,7 +6,7 @@ import { eq } from "@tanstack/db"
 import { useLiveQuery } from "@tanstack/react-db"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
-import { type ReactNode, useEffect, useRef, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { useClient, useJobStatus, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
@@ -15,10 +15,16 @@ import { RepositoryContext } from "@/components/repository-context"
 import { PullStateIcon } from "@/components/status"
 import { openExternal } from "@/platform"
 import { RunDialog } from "../actions/run-dialog"
-import { ChecksContent, ChecksTab } from "./checks"
+import { ChecksContent, ChecksTab, type WorkflowApprovalProps } from "./checks"
 import { ConversationTab } from "./conversation"
 import { FilesTab } from "./files"
 import { ReviewButton } from "./review"
+
+type ApprovalDiscovery = {
+  scope: string
+  candidates: PendingWorkflowApproval[]
+  error?: unknown
+}
 
 export type PullTab = "conversation" | "files" | "checks"
 
@@ -59,6 +65,57 @@ export function PullContent({
       q.from({ d: client.collections.pullDetails.collection }).where(({ d }) => eq(d.key, key)),
     [key],
   ).data[0]
+  const [approvalDiscovery, setApprovalDiscovery] = useState<ApprovalDiscovery>()
+  const [approvalRefresh, setApprovalRefresh] = useState(0)
+  const approvalRequest = useRef(0)
+  const approvingScopes = useRef(new Set<string>())
+  const approvalScope = detail?.headOid ? `${repo}#${number}@${detail.headOid}` : undefined
+  const currentApprovalScope = useRef(approvalScope)
+  currentApprovalScope.current = approvalScope
+
+  const discoverApprovals = useCallback(
+    (headSha: string) => {
+      const scope = `${repo}#${number}@${headSha}`
+      const request = ++approvalRequest.current
+      setApprovalDiscovery((previous) => ({
+        scope,
+        candidates: previous?.scope === scope ? previous.candidates : [],
+      }))
+      return client.fetchPendingPullRequestApprovals(repo, number, headSha).then(
+        (candidates) => {
+          if (request !== approvalRequest.current) return
+          setApprovalDiscovery({ scope, candidates })
+        },
+        (error: unknown) => {
+          if (request !== approvalRequest.current) return
+          setApprovalDiscovery((previous) => ({
+            scope,
+            candidates: previous?.scope === scope ? previous.candidates : [],
+            error,
+          }))
+        },
+      )
+    },
+    [client, number, repo],
+  )
+
+  useEffect(() => {
+    void approvalRefresh
+    void status?.lastSuccess
+    if (!active || !detail?.headOid) {
+      approvalRequest.current++
+      setApprovalDiscovery(undefined)
+      return
+    }
+    void discoverApprovals(detail.headOid)
+    return () => {
+      approvalRequest.current++
+    }
+    // Manual and background PR refreshes retry approval discovery.
+  }, [active, approvalRefresh, detail?.headOid, discoverApprovals, status?.lastSuccess])
+
+  const visibleApprovals =
+    approvalDiscovery?.scope === approvalScope ? approvalDiscovery : undefined
   const setTab = onTabChange
   const search = useSearch({ strict: false }) as { run?: number; job?: number }
   const selectedRun =
@@ -108,6 +165,54 @@ export function PullContent({
   const selectRunJob = (job: number) =>
     void navigate({ to: ".", search: (previous) => ({ ...previous, job }), replace: true })
 
+  const approveWorkflows = async (headSha: string, candidates: PendingWorkflowApproval[]) => {
+    const scope = `${repo}#${number}@${headSha}`
+    if (currentApprovalScope.current !== scope) {
+      throw new Error("The pull request changed. Refresh checks and try again.")
+    }
+    const approving = approvingScopes.current
+    if (approving.has(scope))
+      throw new Error("Approval is already in progress for this pull request.")
+    approving.add(scope)
+    try {
+      const results = await Promise.allSettled(
+        candidates.map((candidate) => client.approveRun(repo, candidate.id)),
+      )
+      const succeeded = new Set(
+        results.flatMap((result, index) =>
+          result.status === "fulfilled" ? [candidates[index]!.id] : [],
+        ),
+      )
+      setApprovalDiscovery((previous) =>
+        previous?.scope === scope
+          ? { ...previous, candidates: previous.candidates.filter(({ id }) => !succeeded.has(id)) }
+          : previous,
+      )
+
+      await client.refresh(jobKeys.pull(repo, number))
+      if (currentApprovalScope.current === scope) await discoverApprovals(headSha)
+
+      const failedNames = results.flatMap((result, index) => {
+        if (result.status !== "rejected") return []
+        const message =
+          result.reason instanceof Error ? result.reason.message : String(result.reason)
+        return [`${candidates[index]!.name}: ${message}`]
+      })
+      if (failedNames.length) {
+        throw new Error(`Approval failed for: ${failedNames.join(", ")}`)
+      }
+    } finally {
+      approving.delete(scope)
+    }
+  }
+
+  const workflowApproval: WorkflowApprovalProps = {
+    approvalScopeKey: approvalScope,
+    approvalCandidates: visibleApprovals?.candidates,
+    approvalError: visibleApprovals?.error,
+    onApprove: (candidates) => approveWorkflows(detail?.headOid ?? "", candidates),
+  }
+
   useShortcuts(
     {
       Escape: onBack,
@@ -120,7 +225,10 @@ export function PullContent({
         } else setTab("checks")
       },
       o: () => detail && void openExternal(detail.url),
-      r: () => void client.refresh(jobKeys.pull(repo, number)),
+      r: () => {
+        setApprovalRefresh((value) => value + 1)
+        void client.refresh(jobKeys.pull(repo, number))
+      },
     },
     active && !selectedRun,
   )
@@ -159,7 +267,10 @@ export function PullContent({
               variant="ghost"
               size="icon-sm"
               aria-label="Refresh"
-              onClick={() => void client.refresh(jobKeys.pull(repo, number))}
+              onClick={() => {
+                setApprovalRefresh((value) => value + 1)
+                void client.refresh(jobKeys.pull(repo, number))
+              }}
             >
               <RefreshCwIcon className={cn(status?.running && "animate-spin")} />
             </Button>
@@ -218,6 +329,7 @@ export function PullContent({
               detail={detail}
               onRunSelect={selectRun}
               checksRailRef={checksRailRef}
+              workflowApproval={workflowApproval}
             />
           )}
           {tab === "files" && (
@@ -232,11 +344,13 @@ export function PullContent({
                 tabIndex={-1}
               >
                 <h2 className="mb-3 text-sm font-semibold">Checks ({detail.checks.length})</h2>
-                <ChecksContent detail={detail} onRunSelect={selectRun} />
+                <ChecksContent detail={detail} onRunSelect={selectRun} {...workflowApproval} />
               </aside>
             </div>
           )}
-          {tab === "checks" && <ChecksTab detail={detail} onRunSelect={selectRun} />}
+          {tab === "checks" && (
+            <ChecksTab detail={detail} onRunSelect={selectRun} {...workflowApproval} />
+          )}
         </div>
       )}
       {active && selectedRun !== undefined && (

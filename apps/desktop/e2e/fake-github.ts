@@ -122,6 +122,7 @@ export async function fakeGitHub(
     mergeError?: number
     mergeGate?: Promise<void>
     headOid?: string
+    headOids?: Record<number, string>
     checks?: Array<{
       name: string
       status: string
@@ -349,12 +350,12 @@ export async function fakeGitHub(
                   index === 0
                     ? (options.pullTitle ?? pullNode.title)
                     : `Follow-up pull request ${index}`,
-                headRefOid: options.headOid ?? "abc123",
+                headRefOid: options.headOids?.[7 + index] ?? options.headOid ?? "abc123",
                 commits: {
                   nodes: [
                     {
                       commit: {
-                        oid: options.headOid ?? "abc123",
+                        oid: options.headOids?.[7 + index] ?? options.headOid ?? "abc123",
                         statusCheckRollup: { state: options.checkState ?? "SUCCESS" },
                       },
                     },
@@ -395,7 +396,8 @@ export async function fakeGitHub(
           ? options.mergeMethods.includes("rebase")
           : detail.rebaseMergeAllowed
         detail.pullRequest.isDraft = options.draft ?? detail.pullRequest.isDraft
-        detail.pullRequest.headRefOid = options.headOid ?? detail.pullRequest.headRefOid
+        detail.pullRequest.headRefOid =
+          options.headOids?.[number] ?? options.headOid ?? detail.pullRequest.headRefOid
         detail.pullRequest.mergeable = options.mergeable ?? detail.pullRequest.mergeable
         if (options.commentCount !== undefined) {
           detail.pullRequest.timelineItems.nodes = Array.from(
