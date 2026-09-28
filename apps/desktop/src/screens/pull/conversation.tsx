@@ -13,7 +13,7 @@ import { Link } from "@tanstack/react-router"
 import { GitCommitHorizontalIcon, MessageSquareIcon } from "lucide-react"
 import { useId, useRef, useState } from "react"
 import { toast } from "sonner"
-import { useClient } from "@/app/client"
+import { useClient, useSession } from "@/app/client"
 import { showError } from "@/app/errors"
 import { UserAvatar } from "@/components/avatar"
 import { GitHubHtml } from "@/components/github-html"
@@ -186,7 +186,7 @@ const MERGE_STATE_TEXT: Record<string, string> = {
 }
 
 function MergeBox({ detail }: { detail: PullRequestDetail }) {
-  const client = useClient()
+  const { client, viewer } = useSession()
   const [method, setMethod] = useState<MergeMethod>(detail.mergeMethods[0] ?? "merge")
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -211,9 +211,15 @@ function MergeBox({ detail }: { detail: PullRequestDetail }) {
     submitting.current = true
     setBusy(true)
     try {
-      await client.merge(detail.repo, detail.number, method)
+      const result = await client.merge(detail.repo, detail.number, method, viewer.login)
       setConfirming(false)
       toast.success(`Merged #${detail.number}`)
+      if (result.inboxError !== undefined) {
+        showError(
+          "PR merged, but its inbox state could not be saved. Refresh to retry.",
+          result.inboxError,
+        )
+      }
     } catch (e) {
       showError("Merge failed", e)
     } finally {

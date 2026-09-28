@@ -29,6 +29,7 @@ type ResourceData = {
   readme: Awaited<ReturnType<typeof getReadme>>
 }
 type PullSummary = {
+  inboxObservedAt?: string
   node_id?: string
   number: number
   title: string
@@ -113,11 +114,15 @@ export function useRepositoryPages<K extends PagedKey>(key: K, enabled = true) {
         case "releases":
           return listReleases(client.rest, resource.owner, resource.repo, page)
         case "pulls": {
+          const inboxObservedAt = new Date().toISOString()
           const items = await client.rest.get<PullSummary[]>(
             `/repos/${encodeURIComponent(resource.owner)}/${encodeURIComponent(resource.repo)}/pulls`,
             { state: "open", per_page: resource.pageSize, page },
           )
-          return { items, hasMore: items.length === resource.pageSize }
+          return {
+            items: items.map((item) => ({ ...item, inboxObservedAt })),
+            hasMore: items.length === resource.pageSize,
+          }
         }
       }
     }

@@ -8,7 +8,7 @@ import {
 } from "@github-client/core"
 import { cn } from "@github-client/ui/lib/utils"
 import { useLiveQuery } from "@tanstack/react-db"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
@@ -21,12 +21,7 @@ import { InboxHeader } from "./inbox-header"
 import { useInboxLocation } from "./inbox-location"
 import { useInboxModel } from "./inbox-model"
 import { useInboxMutations } from "./inbox-mutations"
-import {
-  cancelInboxDragOnUnmount,
-  InboxActions,
-  readShelfState,
-  shelfStorageKey,
-} from "./inbox-parts"
+import { cancelInboxDragOnUnmount, InboxActions } from "./inbox-parts"
 import { InboxRow } from "./inbox-row"
 import { type DropPosition, InboxSections } from "./inbox-sidebar"
 import { PullContent, type PullTab } from "./pull/pull-page"
@@ -50,6 +45,10 @@ export function Inbox({
   active?: boolean
 }) {
   const { client, viewer } = useSession()
+  const lifecycleRevision = useSyncExternalStore(
+    client.subscribeInboxLifecycle,
+    client.getInboxLifecycleRevision,
+  )
   const syncedPulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
   const groups = useLiveQuery((q) => q.from({ g: client.collections.groups.collection })).data
   const preferences = useLiveQuery((q) =>
@@ -60,10 +59,14 @@ export function Inbox({
   const savedView = useRef(initialView)
   const location = useInboxLocation()
   const repositoryData = useRepositoryInboxData(entityScope?.repo, active)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: remote confirmation can change without a successful collection write.
   const pulls = useMemo(() => {
     const syncedIds = new Set(syncedPulls.map((pull) => pull.id))
-    return [...syncedPulls, ...repositoryData.items.filter((pull) => !syncedIds.has(pull.id))]
-  }, [syncedPulls, repositoryData.items])
+    return client.applyConfirmedInboxLifecycles([
+      ...syncedPulls,
+      ...repositoryData.items.filter((pull) => !syncedIds.has(pull.id)),
+    ])
+  }, [client, lifecycleRevision, syncedPulls, repositoryData.items])
   const [selectedRepo, selectedNumber] = location.pull?.split("#") ?? []
   const [selectedOwner, selectedName] = selectedRepo?.split("/") ?? []
   const selectedPull = pulls.find((pull) => `${pull.repo}#${pull.number}` === location.pull)
@@ -71,8 +74,8 @@ export function Inbox({
   const tab = location.pullTab ?? "conversation"
   const setTab = (pullTab: PullTab) => location.update({ pullTab }, true)
   const [failures, setFailures] = useState(initialView?.failures ?? false)
-  const [expanded, setExpanded] = useState(() => readShelfState(viewer.login))
   const [settledLimit, setSettledLimit] = useState(initialView?.settledLimit ?? 10)
+  const [snoozePickerId, setSnoozePickerId] = useState<string | null>(null)
   const [scope, setScope] = useState<"involving" | "all">(
     initialView?.scope ?? (entityScope ? "all" : "involving"),
   )
@@ -125,7 +128,6 @@ export function Inbox({
     selected,
     selectedEntry,
     visibleSettled,
-    visibleSnoozed,
     visibleSettledRows,
   } = useInboxModel({
     pulls,
@@ -136,7 +138,6 @@ export function Inbox({
     scope,
     text,
     selectedId,
-    expanded,
     settledLimit,
     entityScope,
   })
@@ -159,19 +160,12 @@ export function Inbox({
   useEffect(() => {
     if (orderAccount.current !== viewer.login) {
       orderAccount.current = viewer.login
-      setExpanded(readShelfState(viewer.login))
       setSettledLimit(10)
+      setSnoozePickerId(null)
       location.update({ pull: undefined, pullTab: undefined, run: undefined, job: undefined }, true)
       latestUndo.current = null
     }
   }, [latestUndo, viewer.login, location.update])
-  useEffect(() => {
-    try {
-      localStorage.setItem(shelfStorageKey(viewer.login), JSON.stringify(expanded))
-    } catch {
-      // Shelf state remains usable when storage is disabled.
-    }
-  }, [expanded, viewer.login])
   useEffect(() => {
     if (!active) return
     const tick = () => {
@@ -215,9 +209,7 @@ export function Inbox({
 
   const select = (pull: PullRequest) => {
     const entry = fullEntries.find((item) => item.pull.id === pull.id)
-    if (entry?.state === "snoozed") setExpanded((value) => ({ ...value, snoozed: true }))
     if (entry?.state === "settled") {
-      setExpanded((value) => ({ ...value, settled: true }))
       const index = settledEntries.findIndex((item) => item.pull.id === pull.id)
       if (index >= settledLimit) setSettledLimit(index + 1)
     }
@@ -239,9 +231,7 @@ export function Inbox({
     const next = navigable[nextIndex]
     if (!next) return
     select(next.pull)
-    if (next.state === "snoozed") setExpanded((value) => ({ ...value, snoozed: true }))
     if (next.state === "settled") {
-      setExpanded((value) => ({ ...value, settled: true }))
       const settledIndex = settledEntries.findIndex((entry) => entry.pull.id === next.pull.id)
       if (settledIndex >= settledLimit) setSettledLimit(settledIndex + 1)
     }
@@ -275,10 +265,9 @@ export function Inbox({
     setDraggingId,
     setDragOverId,
     setDropPosition,
+    onSnoozeDrop: (pull) => setSnoozePickerId(pull.id),
     runMutation,
   })
-  const toggleExpanded = (section: "snoozed" | "settled") =>
-    setExpanded((current) => ({ ...current, [section]: !current[section] }))
   const renderRow = (entry: InboxPull) => (
     <InboxRow
       key={entry.pull.id}
@@ -288,6 +277,8 @@ export function Inbox({
       online={online}
       dragDisabled={dragDisabled}
       busy={busyIds.has(entry.pull.id)}
+      snoozePickerOpen={snoozePickerId === entry.pull.id}
+      onSnoozePickerOpenChange={(open) => setSnoozePickerId(open ? entry.pull.id : null)}
       onSelect={select}
       onPrefetch={(pull) => void client.prefetchPull(pull.repo, pull.number)}
       onPin={(pull) =>
@@ -332,6 +323,20 @@ export function Inbox({
       onMove={drag.moveBy}
     />
   )
+  const selectedTerminalState = selected
+    ? selected.pull.state === "MERGED" || selected.preference?.terminalState === "MERGED"
+      ? "MERGED"
+      : selected.pull.state === "CLOSED" ||
+          (selected.preference?.terminalState === "CLOSED" &&
+            !(
+              selected.pull.state === "OPEN" &&
+              selected.pull.stateObservedAt &&
+              Date.parse(selected.pull.stateObservedAt) >
+                Date.parse(selected.preference.terminalObservedAt ?? selected.preference.changedAt)
+            ))
+        ? "CLOSED"
+        : undefined
+    : undefined
 
   return (
     <div ref={inboxPane} className="relative flex h-full min-w-0">
@@ -352,6 +357,7 @@ export function Inbox({
       >
         <aside
           aria-label="Pull request inbox"
+          data-inbox-ready={orderReady && !repositoryData.refreshing}
           style={{ width: geometry.mobile ? "100%" : geometry.width }}
           className={cn(
             "relative flex min-h-0 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground",
@@ -421,16 +427,12 @@ export function Inbox({
             activeEntries={activeEntries}
             snoozedEntries={snoozedEntries}
             settledEntries={settledEntries}
-            visibleSnoozed={visibleSnoozed}
             visibleSettledRows={visibleSettledRows}
             visibleSettledCount={visibleSettled.length}
-            selectedSnoozed={selectedEntry?.state === "snoozed"}
-            selectedSettled={selectedEntry?.state === "settled"}
-            expanded={expanded}
             dragDisabled={dragDisabled}
+            dragging={Boolean(draggingId)}
             dropPosition={dropPosition}
             renderRow={renderRow}
-            onToggleShelf={toggleExpanded}
             onShowMoreSettled={() => setSettledLimit((limit) => limit + 25)}
           />
           {repositoryData.loading && (
@@ -497,6 +499,7 @@ export function Inbox({
                   <InboxActions
                     key={selected.pull.id}
                     state={selected.state}
+                    terminalState={selectedTerminalState}
                     snoozedUntil={selected.preference?.snoozedUntil}
                     busy={busyIds.has(selected.pull.id)}
                     onSnooze={(until, close) =>

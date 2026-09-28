@@ -43,6 +43,8 @@ export function InboxRow({
   online,
   dragDisabled,
   busy,
+  snoozePickerOpen,
+  onSnoozePickerOpenChange,
   onSelect,
   onPrefetch,
   onPin,
@@ -58,6 +60,8 @@ export function InboxRow({
   online: boolean
   dragDisabled: boolean
   busy: boolean
+  snoozePickerOpen: boolean
+  onSnoozePickerOpenChange: (open: boolean) => void
   onSelect: (pull: PullRequest) => void
   onPrefetch: InboxRowAction
   onPin: InboxRowAction
@@ -69,14 +73,24 @@ export function InboxRow({
 }) {
   const pull = entry.pull
   const pinned = entry.preference?.pinOrder !== undefined
+  const terminal =
+    pull.state === "MERGED" ||
+    entry.preference?.terminalState === "MERGED" ||
+    pull.state === "CLOSED" ||
+    (entry.preference?.terminalState === "CLOSED" &&
+      !(
+        pull.state === "OPEN" &&
+        pull.stateObservedAt &&
+        Date.parse(pull.stateObservedAt) >
+          Date.parse(entry.preference.terminalObservedAt ?? entry.preference.changedAt)
+      ))
   const compact = entry.state !== "active"
   const checkId = useId()
   const sortable = useSortable({
     id: pull.id,
-    disabled: dragDisabled || busy,
+    disabled: dragDisabled || busy || terminal,
     transition: { duration: 150, easing: "ease-out" },
   })
-  const [snoozeOpen, setSnoozeOpen] = useState(false)
   const [custom, setCustom] = useState("")
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
@@ -88,7 +102,7 @@ export function InboxRow({
       return
     }
     onSnooze(pull, new Date(timestamp).toISOString())
-    setSnoozeOpen(false)
+    onSnoozePickerOpenChange(false)
   }
   const tomorrow = () => {
     const date = new Date()
@@ -117,18 +131,22 @@ export function InboxRow({
         type="button"
         {...sortable.listeners}
         data-inbox-row-select
-        title={!dragDisabled && !busy ? "Drag to reorder or move between sections" : undefined}
+        title={
+          !dragDisabled && !busy && !terminal
+            ? "Drag to reorder or move between sections"
+            : undefined
+        }
         aria-current={selected ? "page" : undefined}
         aria-label={`${pull.repo} #${pull.number}: ${pull.title}`}
         aria-describedby={compact ? `${checkId} ${checkId}-time` : checkId}
         onClick={() => onSelect(pull)}
         className={cn(
           "relative w-full touch-pan-y text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          !dragDisabled && !busy && "cursor-grab pl-4 active:cursor-grabbing",
+          !dragDisabled && !busy && !terminal && "cursor-grab pl-4 active:cursor-grabbing",
           compact ? "flex min-h-7 items-center gap-1.5 pr-7" : "flex flex-col gap-1",
         )}
       >
-        {!dragDisabled && !busy && (
+        {!dragDisabled && !busy && !terminal && (
           <GripVerticalIcon
             aria-hidden="true"
             className="absolute left-0 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -187,22 +205,24 @@ export function InboxRow({
           compact ? "top-1" : "bottom-1",
         )}
       >
-        {entry.state === "active" && (
+        {((entry.state === "active" && !terminal) || (snoozePickerOpen && !terminal)) && (
           <>
-            <Button
-              type="button"
-              data-inbox-control
-              variant="ghost"
-              size="icon-sm"
-              disabled={busy}
-              aria-label={`${pinned ? "Unpin" : "Pin"} ${pull.title}`}
-              className="inbox-direct-action size-6"
-              title={pinned ? "Unpin" : "Pin"}
-              onClick={() => (pinned ? onUnpin(pull) : onPin(pull))}
-            >
-              {pinned ? <PinOffIcon /> : <PinIcon />}
-            </Button>
-            <Popover open={snoozeOpen} onOpenChange={setSnoozeOpen}>
+            {entry.state === "active" && !terminal && (
+              <Button
+                type="button"
+                data-inbox-control
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy}
+                aria-label={`${pinned ? "Unpin" : "Pin"} ${pull.title}`}
+                className="inbox-direct-action size-6"
+                title={pinned ? "Unpin" : "Pin"}
+                onClick={() => (pinned ? onUnpin(pull) : onPin(pull))}
+              >
+                {pinned ? <PinOffIcon /> : <PinIcon />}
+              </Button>
+            )}
+            <Popover open={snoozePickerOpen} onOpenChange={onSnoozePickerOpenChange}>
               <PopoverTrigger
                 render={
                   <Button
@@ -262,22 +282,24 @@ export function InboxRow({
                 </Button>
               </PopoverContent>
             </Popover>
-            <Button
-              type="button"
-              data-inbox-control
-              variant="ghost"
-              size="icon-sm"
-              disabled={busy}
-              aria-label={`Settle locally: ${pull.title}`}
-              className="inbox-direct-action size-6"
-              title="Remove from Active only. Does not approve, merge, or close the GitHub PR."
-              onClick={() => onSettle(pull)}
-            >
-              <CheckIcon />
-            </Button>
+            {entry.state === "active" && !terminal && (
+              <Button
+                type="button"
+                data-inbox-control
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy}
+                aria-label={`Settle locally: ${pull.title}`}
+                className="inbox-direct-action size-6"
+                title="Remove from Active only. Does not approve, merge, or close the GitHub PR."
+                onClick={() => onSettle(pull)}
+              >
+                <CheckIcon />
+              </Button>
+            )}
           </>
         )}
-        {entry.state !== "active" && (
+        {entry.state !== "active" && !terminal && (
           <Button
             type="button"
             data-inbox-control
@@ -292,59 +314,64 @@ export function InboxRow({
             <Undo2Icon />
           </Button>
         )}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type="button"
-                data-inbox-control
-                variant="ghost"
-                size="icon-sm"
-                disabled={busy}
-                aria-label={`Actions for ${pull.title}`}
-                className="size-6"
-                title="More actions"
-              />
-            }
-          >
-            <MoreHorizontalIcon />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {entry.state === "active" && pinned && (
-              <DropdownMenuItem disabled={busy} onClick={() => onUnpin(pull)}>
-                Unpin
-              </DropdownMenuItem>
-            )}
-            {entry.state === "active" && !pinned && (
-              <DropdownMenuItem disabled={busy} onClick={() => onPin(pull)}>
-                Pin
-              </DropdownMenuItem>
-            )}
-            {entry.state === "active" && (
-              <>
-                <DropdownMenuItem disabled={busy || dragDisabled} onClick={() => onMove(pull, -1)}>
-                  <ArrowUpIcon />
-                  Move up
+        {!terminal && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  data-inbox-control
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={busy}
+                  aria-label={`Actions for ${pull.title}`}
+                  className="size-6"
+                  title="More actions"
+                />
+              }
+            >
+              <MoreHorizontalIcon />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {entry.state === "active" && pinned && (
+                <DropdownMenuItem disabled={busy} onClick={() => onUnpin(pull)}>
+                  Unpin
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={busy || dragDisabled} onClick={() => onMove(pull, 1)}>
-                  <ArrowDownIcon />
-                  Move down
+              )}
+              {entry.state === "active" && !pinned && (
+                <DropdownMenuItem disabled={busy} onClick={() => onPin(pull)}>
+                  Pin
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={busy} onClick={() => setSnoozeOpen(true)}>
-                  Snooze…
+              )}
+              {entry.state === "active" && (
+                <>
+                  <DropdownMenuItem
+                    disabled={busy || dragDisabled}
+                    onClick={() => onMove(pull, -1)}
+                  >
+                    <ArrowUpIcon />
+                    Move up
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={busy || dragDisabled} onClick={() => onMove(pull, 1)}>
+                    <ArrowDownIcon />
+                    Move down
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={busy} onClick={() => onSnoozePickerOpenChange(true)}>
+                    Snooze…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={busy} onClick={() => onSettle(pull)}>
+                    Settle locally
+                  </DropdownMenuItem>
+                </>
+              )}
+              {entry.state !== "active" && (
+                <DropdownMenuItem disabled={busy} onClick={() => onRestore(pull)}>
+                  {entry.state === "snoozed" ? "Wake to previous position" : "Restore to Active"}
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={busy} onClick={() => onSettle(pull)}>
-                  Settle locally
-                </DropdownMenuItem>
-              </>
-            )}
-            {entry.state !== "active" && (
-              <DropdownMenuItem disabled={busy} onClick={() => onRestore(pull)}>
-                {entry.state === "snoozed" ? "Wake to previous position" : "Restore to Active"}
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </li>
   )

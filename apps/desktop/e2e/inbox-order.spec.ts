@@ -29,16 +29,74 @@ async function beginDrag(page: Page, source: Locator, target: Locator) {
   })
   await activator.click({ trial: true })
   const from = await source.boundingBox()
-  const to = await target.boundingBox()
-  if (!from || !to) throw new Error("Drag source or target is not visible")
+  if (!from) throw new Error("Drag source is not visible")
   await page.mouse.move(from.x + Math.min(24, from.width / 2), from.y + from.height / 2)
   await page.mouse.down()
   await page.mouse.move(from.x + Math.min(24, from.width / 2) + 10, from.y + from.height / 2, {
     steps: 3,
   })
-  await page.mouse.move(to.x + 24, to.y + to.height / 2, { steps: 10 })
   await expect(page.getByRole("status", { name: "Dragging pull request" })).toBeVisible()
+  await expect(target).toBeVisible()
+  const to = await target.boundingBox()
+  if (!to) throw new Error("Drag target is not visible after activation")
+  await page.mouse.move(to.x + 24, to.y + to.height / 2, { steps: 10 })
 }
+
+test("auxiliary headings stay hidden at rest while their rows remain visible", async ({ page }) => {
+  await setup(page)
+  await menuAction(page, "Pin", "PR_1")
+  await menuAction(page, "Snooze…", "PR_2")
+  await page.getByRole("button", { name: "In one hour", exact: true }).click()
+  await menuAction(page, "Settle locally", "PR_3")
+
+  await expect(page.getByRole("heading", { name: /^Pinned/ })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: /^Snoozed/ })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: /^Settled/ })).toHaveCount(0)
+  await expect(row(page, "PR_1")).toBeVisible()
+  await expect(row(page, "PR_2")).toBeVisible()
+  await expect(row(page, "PR_3")).toBeVisible()
+
+  await beginDrag(page, row(page, "PR_4"), page.getByRole("heading", { name: /^Snoozed/ }))
+  await expect(page.getByRole("heading", { name: /^Pinned/ })).toBeVisible()
+  await expect(page.getByRole("heading", { name: /^Settled/ })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await page.mouse.up()
+  await expect(page.getByRole("heading", { name: /^Pinned/ })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: /^Snoozed/ })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: /^Settled/ })).toHaveCount(0)
+  await expect(active(page).locator('[data-pull-id="PR_4"]')).toBeVisible()
+
+  await beginDrag(page, row(page, "PR_3"), page.getByRole("heading", { name: /^Snoozed/ }))
+  await page.mouse.up()
+  await expect(page.getByRole("button", { name: "In one hour", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("button", { name: "In one hour", exact: true })).toHaveCount(0)
+  await expect(row(page, "PR_3")).toBeVisible()
+  await expect(page.getByText("Settled locally · GitHub PR unchanged")).toBeVisible()
+})
+
+test("dropping on Snoozed opens the picker and cancellation leaves the PR active", async ({
+  page,
+}) => {
+  await setup(page)
+  await beginDrag(page, row(page), page.getByRole("heading", { name: /^Snoozed/ }))
+  await page.mouse.up()
+  await expect(page.getByRole("button", { name: "In one hour", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("button", { name: "In one hour", exact: true })).toHaveCount(0)
+  await expect(active(page).locator('[data-pull-id="PR_1"]')).toBeVisible()
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Snoozed" })).toHaveCount(0)
+
+  await beginDrag(page, row(page), page.getByRole("heading", { name: /^Snoozed/ }))
+  await page.mouse.up()
+  await page.getByRole("button", { name: "In one hour", exact: true }).click()
+  await expect(
+    page.locator("[data-sonner-toast]").getByText("Snoozed", { exact: true }),
+  ).toBeVisible()
+  await expect(row(page)).toBeVisible()
+  await expect(active(page).locator('[data-pull-id="PR_1"]')).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: /^Snoozed/ })).toHaveCount(0)
+})
 
 test("pin order persists and exact Undo restores a snoozed pinned PR", async ({ page }) => {
   const requests = await setup(page)
@@ -74,12 +132,12 @@ test("drag commits to an empty pinned target and Escape cancels a settle", async
   await beginDrag(page, grip, page.getByRole("heading", { name: /^Pinned/ }))
   await page.mouse.up()
   await expect(pinned(page).locator('[data-pull-id="PR_1"]')).toBeVisible()
-  await beginDrag(page, row(page), page.getByRole("button", { name: /^Settled/ }))
+  await beginDrag(page, row(page), page.getByRole("heading", { name: /^Settled/ }))
   await page.keyboard.press("Escape")
   await page.mouse.up()
   await expect(pinned(page).locator('[data-pull-id="PR_1"]')).toBeVisible()
   await expect(page.getByRole("heading", { name: "Speed up the diff view" })).toBeVisible()
-  await beginDrag(page, row(page), page.getByRole("button", { name: /^Settled/ }))
+  await beginDrag(page, row(page), page.getByRole("heading", { name: /^Settled/ }))
   await page.mouse.up()
   await expect(pinned(page).locator('[data-pull-id="PR_1"]')).toHaveCount(0)
   await expect(
@@ -201,15 +259,16 @@ test("dragging within Active commits the indicated before-row position", async (
     .getByTitle("Drag to reorder or move between sections", { exact: true })
     .click({ trial: true })
   const from = await row(page, "PR_3").boundingBox()
-  const to = await row(page, "PR_1").boundingBox()
-  if (!from || !to) throw new Error("Reorder rows are missing")
+  if (!from) throw new Error("Reorder source row is missing")
   await page.mouse.move(from.x + Math.min(24, from.width / 2), from.y + from.height / 2)
   await page.mouse.down()
   await page.mouse.move(from.x + Math.min(24, from.width / 2) + 10, from.y + from.height / 2, {
     steps: 3,
   })
-  await page.mouse.move(to.x + 24, to.y + 4, { steps: 10 })
   await expect(page.getByRole("status", { name: "Dragging pull request" })).toBeVisible()
+  const to = await row(page, "PR_1").boundingBox()
+  if (!to) throw new Error("Reorder target row is missing after drag activation")
+  await page.mouse.move(to.x + 24, to.y + 4, { steps: 10 })
   await page.mouse.up()
   await expect
     .poll(() =>
@@ -236,8 +295,8 @@ test("keyboard pinning a background PR preserves detail and restores row focus",
     .getByRole("button", { name: /^Actions for/ })
     .press("Enter")
   await page.getByRole("menuitem", { name: "Settle locally", exact: true }).press("Enter")
-  await expect(page.getByRole("button", { name: /^Settled/ })).toBeFocused()
-  await expect(row(page, "PR_2")).toHaveCount(0)
+  await expect(row(page, "PR_2").getByRole("button", { name: /^Actions for/ })).toBeFocused()
+  await expect(row(page, "PR_2")).toBeVisible()
 })
 
 test("sidebar resizing is keyboard accessible, persisted and resets", async ({ page }) => {

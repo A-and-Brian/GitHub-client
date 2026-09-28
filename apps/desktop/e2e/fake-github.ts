@@ -113,6 +113,7 @@ export async function fakeGitHub(
     contributionsZero?: boolean
     lastContributionDays?: number
     pullCount?: number
+    pullStates?: Record<number, "OPEN" | "CLOSED" | "MERGED">
     pullTitle?: string
     pullUpdatedAt?: Record<string, string>
     workflowRun?: boolean
@@ -158,6 +159,8 @@ export async function fakeGitHub(
 
   const requests: Array<{ method: string; path: string; body: unknown }> = []
   let merged = false
+  const pullState = (number: number) =>
+    number === 7 && merged ? "MERGED" : (options.pullStates?.[number] ?? "OPEN")
   await page.route("https://api.github.com/**", async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -210,21 +213,26 @@ export async function fakeGitHub(
       return json(route, settings)
     }
     if (url.pathname === "/repos/acme/api/pulls")
-      return json(route, [
-        {
-          node_id: "PR_1",
-          number: 7,
-          title: options.pullTitle ?? pullNode.title,
-          html_url: pullNode.url,
-          user: { login: "hubot", avatar_url: "" },
-          draft: false,
-          created_at: pullNode.createdAt,
-          updated_at: pullNode.updatedAt,
-          head: { ref: "fast-diff", sha: options.headOid ?? "abc123" },
-          base: { ref: "main" },
-          requested_reviewers: [{ login: "octo" }],
-        },
-      ])
+      return json(
+        route,
+        pullState(7) !== "OPEN"
+          ? []
+          : [
+              {
+                node_id: "PR_1",
+                number: 7,
+                title: options.pullTitle ?? pullNode.title,
+                html_url: pullNode.url,
+                user: { login: "hubot", avatar_url: "" },
+                draft: false,
+                created_at: pullNode.createdAt,
+                updated_at: pullNode.updatedAt,
+                head: { ref: "fast-diff", sha: options.headOid ?? "abc123" },
+                base: { ref: "main" },
+                requested_reviewers: [{ login: "octo" }],
+              },
+            ],
+      )
     if (url.pathname === "/repos/acme/api/releases") {
       if (options.releasesError)
         return route.fulfill({
@@ -361,7 +369,7 @@ export async function fakeGitHub(
                     },
                   ],
                 },
-              })),
+              })).filter((pull) => pullState(pull.number) === "OPEN"),
             },
           },
         })
@@ -433,7 +441,7 @@ export async function fakeGitHub(
                     },
             }))
         }
-        if (merged) detail.pullRequest.state = "MERGED"
+        detail.pullRequest.state = pullState(number)
         return json(route, { data: { repository: detail } })
       }
       if (query.includes("query Contributions")) {

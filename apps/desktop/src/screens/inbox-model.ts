@@ -11,7 +11,6 @@ export function useInboxModel({
   scope,
   text,
   selectedId,
-  expanded,
   settledLimit,
   entityScope,
 }: {
@@ -23,7 +22,6 @@ export function useInboxModel({
   scope: "involving" | "all"
   text: string
   selectedId: string | null
-  expanded: { snoozed: boolean; settled: boolean }
   settledLimit: number
   entityScope?: { groupId?: string; repo?: string }
 }) {
@@ -105,16 +103,7 @@ export function useInboxModel({
   ) {
     visibleSettled.push(selectedEntry)
   }
-  const visibleSnoozed = expanded.snoozed
-    ? snoozedEntries
-    : selectedEntry?.state === "snoozed"
-      ? [selectedEntry]
-      : []
-  const visibleSettledRows = expanded.settled
-    ? visibleSettled
-    : selectedEntry?.state === "settled"
-      ? [selectedEntry]
-      : []
+  const visibleSettledRows = visibleSettled
 
   return {
     fullEntries,
@@ -127,7 +116,6 @@ export function useInboxModel({
     selected,
     selectedEntry,
     visibleSettled,
-    visibleSnoozed,
     visibleSettledRows,
   }
 }

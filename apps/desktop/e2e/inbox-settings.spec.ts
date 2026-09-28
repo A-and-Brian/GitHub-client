@@ -77,7 +77,6 @@ test("snooze survives reload and can be restored", async ({ page }) => {
     page.locator("[data-sonner-toast]").filter({ hasText: "Snoozed until" }),
   ).toBeVisible()
   await page.reload()
-  await page.getByRole("button", { name: /^Snoozed/ }).click()
   await page.getByText("Speed up the diff view", { exact: true }).click()
   await expect(page.getByRole("button", { name: "Restore to Active" })).toBeVisible()
   await page.getByRole("button", { name: "Restore to Active" }).click()

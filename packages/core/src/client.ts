@@ -3,7 +3,7 @@ import * as workflows from "./actions/workflows"
 import { checkToken, TokenAuthProvider, type TokenCheck } from "./auth/auth"
 import { type Collections, createCollections } from "./collections"
 import { Contributions } from "./contributions"
-import type { Group, MergeMethod, PullRequest } from "./domain/types"
+import type { Group, MergeMethod, PullRequest, PullRequestDetail } from "./domain/types"
 import { prKey } from "./domain/types"
 import { GraphQLClient } from "./github/graphql"
 import { RestClient } from "./github/rest"
@@ -37,12 +37,23 @@ import {
 } from "./sync/actions"
 import { syncGroups } from "./sync/groups"
 import { Poller } from "./sync/poller"
-import { syncPullDetail, syncPullFiles } from "./sync/pull-detail"
-import { syncGroupPulls } from "./sync/pulls"
+import { fetchPullDetail, fetchPullFiles } from "./sync/pull-detail"
+import {
+  applyGroupPulls,
+  fetchGroupPulls,
+  preserveTerminalPulls,
+  updatePullLifecycleCopies,
+  verifyMissingPulls,
+} from "./sync/pulls"
 
 const ACTIVE_MS = 15_000
 const IDLE_MS = 2 * 60_000
 const GROUPS_IDLE_MS = 15 * 60_000
+
+function observationTime(value?: string): number {
+  const parsed = Date.parse(value ?? "")
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY
+}
 
 export const jobKeys = {
   groups: "groups",
@@ -76,9 +87,17 @@ export class GitHubClient {
   readonly repositoryCache: RepositoryCache
   readonly platform: Platform
   private syncing = false
+  private authGeneration = 0
+  private activeInboxAccount: string | null = null
   private inboxQueue: Promise<unknown> = Promise.resolve()
   private nextInboxUndoId = 0
   private inboxUndoTokens = new Map<number, InboxUndoSnapshot>()
+  private readonly confirmedPullStates = new Map<
+    string,
+    { state: "OPEN" | "CLOSED" | "MERGED"; observedAt: string }
+  >()
+  private inboxLifecycleRevision = 0
+  private readonly inboxLifecycleListeners = new Set<() => void>()
 
   constructor(platform: Platform) {
     this.platform = platform
@@ -100,8 +119,12 @@ export class GitHubClient {
     const probe = new RestClient({ fetch: this.platform.fetch, getToken: () => token })
     const check = await checkToken(probe)
     await this.enqueueInbox(async () => {
+      this.authGeneration++
       await this.auth.signIn(token)
       this.inboxUndoTokens.clear()
+      this.confirmedPullStates.clear()
+      this.activeInboxAccount = null
+      this.notifyInboxLifecycle()
       this.contributions.reset()
     })
     return check
@@ -110,11 +133,15 @@ export class GitHubClient {
   /** Forgets the token and deletes cached data, which belongs to the signed-out account. */
   async signOut(): Promise<void> {
     await this.enqueueInbox(async () => {
+      this.authGeneration++
       this.poller.stop()
       await this.repositoryCache.clearAll()
       await this.auth.signOut()
       this.contributions.reset()
       this.inboxUndoTokens.clear()
+      this.confirmedPullStates.clear()
+      this.notifyInboxLifecycle()
+      this.activeInboxAccount = null
       const { drafts, ...synced } = this.collections
       await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
       const draftIds = [...drafts.keys()]
@@ -245,6 +272,7 @@ export class GitHubClient {
     now = Date.now(),
     groups?: readonly Group[],
   ) {
+    this.activeInboxAccount = accountLogin.trim().toLowerCase()
     return this.enqueueInbox(async () => {
       await this.preloadInboxCollections()
       const before = this.accountPreferenceMap(accountLogin)
@@ -259,6 +287,229 @@ export class GitHubClient {
       )
       this.invalidateUndoForChangedRows(accountLogin, before)
     })
+  }
+
+  getInboxLifecycleRevision = (): number => {
+    return this.inboxLifecycleRevision
+  }
+
+  subscribeInboxLifecycle = (listener: () => void): (() => void) => {
+    this.inboxLifecycleListeners.add(listener)
+    return () => this.inboxLifecycleListeners.delete(listener)
+  }
+
+  applyConfirmedInboxLifecycles(pulls: readonly PullRequest[]): PullRequest[] {
+    return pulls.map((pull) => {
+      const confirmed = this.confirmedPullStates.get(pull.id)
+      if (!confirmed) return pull
+      if (confirmed.state === "MERGED") {
+        return { ...pull, state: "MERGED", stateObservedAt: confirmed.observedAt }
+      }
+      const rowObservedAt = pull.stateObservedAt
+        ? Date.parse(pull.stateObservedAt)
+        : Number.NEGATIVE_INFINITY
+      if (confirmed.state === "OPEN") {
+        if (pull.state === "MERGED" || rowObservedAt > Date.parse(confirmed.observedAt)) return pull
+        return { ...pull, state: "OPEN", stateObservedAt: confirmed.observedAt }
+      }
+      if (pull.state === "MERGED") return pull
+      return rowObservedAt > Date.parse(confirmed.observedAt)
+        ? pull
+        : { ...pull, state: "CLOSED", stateObservedAt: confirmed.observedAt }
+    })
+  }
+
+  private notifyInboxLifecycle(): void {
+    this.inboxLifecycleRevision++
+    for (const listener of this.inboxLifecycleListeners) listener()
+  }
+
+  private async observePullLifecycle(
+    detail: PullRequestDetail,
+    observedAt: string,
+    accountLogin?: string,
+  ): Promise<boolean> {
+    const copies = [...this.collections.pulls.collection.values()].filter(
+      (row) => row.id === detail.id,
+    )
+    const preferences = [...this.collections.inboxPreferences.collection.values()].filter(
+      (row) =>
+        row.pullId === detail.id &&
+        (!accountLogin || row.accountLogin === accountLogin.toLowerCase()),
+    )
+    const overlay = this.confirmedPullStates.get(detail.id)
+    if (
+      detail.state !== "MERGED" &&
+      (overlay?.state === "MERGED" ||
+        copies.some((row) => row.state === "MERGED") ||
+        preferences.some((row) => row.terminalState === "MERGED"))
+    )
+      return false
+    const latestObservedAt = Math.max(
+      ...copies.map((row) => Date.parse(row.stateObservedAt ?? "")).filter(Number.isFinite),
+      ...preferences
+        .filter((row) => row.terminalState)
+        .map((row) => Date.parse(row.terminalObservedAt ?? row.changedAt))
+        .filter(Number.isFinite),
+      ...(overlay ? [Date.parse(overlay.observedAt)] : []),
+    )
+    if (detail.state !== "MERGED" && Date.parse(observedAt) < latestObservedAt) return false
+    if (detail.state === "MERGED") {
+      const mergedAt = new Date(Math.max(Date.parse(observedAt), latestObservedAt)).toISOString()
+      this.confirmedPullStates.set(detail.id, { state: "MERGED", observedAt: mergedAt })
+      this.notifyInboxLifecycle()
+      await updatePullLifecycleCopies(this.collections.pulls, detail.id, "MERGED", mergedAt)
+    } else if (detail.state === "CLOSED") {
+      this.confirmedPullStates.set(detail.id, { state: "CLOSED", observedAt })
+      this.notifyInboxLifecycle()
+      await updatePullLifecycleCopies(this.collections.pulls, detail.id, "CLOSED", observedAt)
+    } else {
+      const hasClosedObservation =
+        copies.some((row) => row.state === "CLOSED") ||
+        preferences.some((row) => row.terminalState === "CLOSED") ||
+        this.confirmedPullStates.get(detail.id)?.state === "CLOSED"
+      const priorClosedTimes = [
+        ...copies
+          .filter((row) => row.state === "CLOSED")
+          .map((row) => Date.parse(row.stateObservedAt ?? "")),
+        ...preferences
+          .filter((row) => row.terminalState === "CLOSED")
+          .map((row) => Date.parse(row.terminalObservedAt ?? row.changedAt)),
+        ...(this.confirmedPullStates.get(detail.id)?.state === "CLOSED"
+          ? [Date.parse(this.confirmedPullStates.get(detail.id)!.observedAt)]
+          : []),
+      ].filter(Number.isFinite)
+      const priorClosedAt =
+        priorClosedTimes.length > 0 ? Math.max(...priorClosedTimes) : Number.NEGATIVE_INFINITY
+      if (hasClosedObservation && Date.parse(observedAt) <= priorClosedAt) return false
+      if (hasClosedObservation && Date.parse(observedAt) > priorClosedAt) {
+        this.confirmedPullStates.set(detail.id, { state: "OPEN", observedAt })
+        this.notifyInboxLifecycle()
+        await updatePullLifecycleCopies(this.collections.pulls, detail.id, "OPEN", observedAt)
+      }
+    }
+    if (accountLogin) {
+      await reconcileInboxPreferences(
+        this.collections.inboxPreferences,
+        accountLogin,
+        [...this.collections.pulls.collection.values()],
+        Date.now(),
+        [...this.collections.groups.collection.values()],
+      )
+    }
+    return true
+  }
+
+  syncRepositoryInbox(
+    accountLogin: string,
+    repo: string,
+    rows: readonly PullRequest[],
+    options: { complete: boolean; observedAt?: string },
+  ): Promise<void> {
+    this.activeInboxAccount = accountLogin.trim().toLowerCase()
+    const authGeneration = this.authGeneration
+    const groupId = `repo:${repo}`
+    const observedAt =
+      options.observedAt ??
+      rows
+        .map((row) => row.syncedAt)
+        .filter((value): value is string => Boolean(value))
+        .sort()[0] ??
+      new Date().toISOString()
+    return (async () => {
+      if (!this.auth.getToken()) return
+      await this.collections.pulls.collection.preload()
+      if (authGeneration !== this.authGeneration) return
+      const priorRows = [...this.collections.pulls.collection.values()].filter(
+        (row) => row.groupId === groupId,
+      )
+      const verified = options.complete
+        ? await verifyMissingPulls(this.graphql, priorRows, rows, groupId)
+        : undefined
+      await this.enqueueInbox(async () => {
+        if (authGeneration !== this.authGeneration || !this.auth.getToken()) return
+        await this.collections.inboxPreferences.collection.preload()
+        const currentPriorRows = [...this.collections.pulls.collection.values()].filter(
+          (row) => row.groupId === groupId,
+        )
+        const normalized: PullRequest[] = rows.map((row) => {
+          const existing = [...this.collections.pulls.collection.values()].find(
+            (copy) => copy.id === row.id,
+          )
+          return {
+            ...existing,
+            ...row,
+            key: `${groupId}:${row.id}`,
+            groupId,
+            reviewDecision: row.reviewDecision ?? existing?.reviewDecision ?? null,
+            checkState: row.checkState ?? existing?.checkState ?? null,
+            labels: row.labels.length > 0 ? row.labels : (existing?.labels ?? row.labels),
+            additions: row.additions || existing?.additions || 0,
+            deletions: row.deletions || existing?.deletions || 0,
+            comments: row.comments || existing?.comments || 0,
+            checkSnapshotComplete: existing ? existing.checkSnapshotComplete !== false : false,
+            state: "OPEN" as const,
+          }
+        })
+        for (const row of normalized) {
+          const overlay = this.confirmedPullStates.get(row.id)
+          const observations = [
+            ...[...this.collections.pulls.collection.values()]
+              .filter((copy) => copy.id === row.id && copy.state)
+              .map((copy) => ({ state: copy.state!, observedAt: copy.stateObservedAt })),
+            ...(overlay ? [{ state: overlay.state, observedAt: overlay.observedAt }] : []),
+          ]
+          const merged = observations.find((observation) => observation.state === "MERGED")
+          if (merged) {
+            row.state = "MERGED"
+            row.stateObservedAt = merged.observedAt
+            continue
+          }
+          const latest = observations.sort((a, b) => {
+            const freshness = observationTime(b.observedAt) - observationTime(a.observedAt)
+            return !Number.isNaN(freshness) && freshness !== 0
+              ? freshness
+              : Number(b.state === "CLOSED") - Number(a.state === "CLOSED")
+          })[0]
+          if (latest && observationTime(latest.observedAt) >= Date.parse(observedAt)) {
+            row.state = latest.state
+            row.stateObservedAt = latest.observedAt
+            continue
+          }
+          row.state = "OPEN"
+          row.stateObservedAt = observedAt
+          if (latest?.state === "CLOSED") {
+            this.confirmedPullStates.set(row.id, { state: "OPEN", observedAt })
+            this.notifyInboxLifecycle()
+            await updatePullLifecycleCopies(this.collections.pulls, row.id, "OPEN", observedAt)
+          }
+        }
+        let nextRows = normalized
+        if (options.complete) {
+          nextRows = await preserveTerminalPulls(
+            this.collections.pulls,
+            this.collections.pullDetails,
+            currentPriorRows,
+            normalized,
+            observedAt,
+            verified,
+          )
+        }
+        if (options.complete) {
+          await this.collections.pulls.replace(nextRows, (row) => row.groupId === groupId)
+        } else {
+          await this.collections.pulls.upsert(nextRows)
+        }
+        const groups = [...this.collections.groups.collection.values()]
+        await reconcileInboxPreferences(
+          this.collections.inboxPreferences,
+          accountLogin,
+          [...this.collections.pulls.collection.values()],
+          Date.now(),
+          groups,
+        )
+      })
+    })()
   }
 
   private enqueueInbox<T>(operation: () => Promise<T>): Promise<T> {
@@ -313,42 +564,48 @@ export class GitHubClient {
     pull: PullRequest,
     operation: () => Promise<InboxPreference>,
   ): Promise<InboxMutationResult> {
-    return this.enqueueInbox(async () => {
-      await this.prepareInbox(accountLogin, pull)
-      const before = this.accountPreferenceMap(accountLogin)
-      const preference = await operation()
-      const after = this.accountPreferenceMap(accountLogin)
-      const changedIds = new Set<string>()
-      for (const id of new Set([...before.keys(), ...after.keys()])) {
-        if (!samePreference(before.get(id), after.get(id))) changedIds.add(id)
-      }
-      if (changedIds.size === 0) return { preference, undo: null }
+    return this.enqueueInbox(() => this.mutateInboxNow(accountLogin, pull, operation))
+  }
 
-      const account = accountLogin.trim().toLowerCase()
-      const snapshots = (source: Map<string, InboxPreference>) =>
-        [...changedIds].map((pullId) => {
-          const row = source.get(pullId)
-          return { pullId, ...(row ? { preference: plainPreference(row) } : {}) }
-        })
-      const token: InboxUndoToken = {
-        id: ++this.nextInboxUndoId,
-        accountLogin: account,
-        expiresAt: Date.now() + INBOX_UNDO_TTL_MS,
-      }
-      this.pruneInboxUndoTokens(Date.now())
-      this.invalidateUndoTokens(account, changedIds)
-      this.inboxUndoTokens.set(token.id, {
-        token,
-        before: snapshots(before),
-        after: snapshots(after),
+  private async mutateInboxNow(
+    accountLogin: string,
+    pull: PullRequest,
+    operation: () => Promise<InboxPreference>,
+  ): Promise<InboxMutationResult> {
+    await this.prepareInbox(accountLogin, pull)
+    const before = this.accountPreferenceMap(accountLogin)
+    const preference = await operation()
+    const after = this.accountPreferenceMap(accountLogin)
+    const changedIds = new Set<string>()
+    for (const id of new Set([...before.keys(), ...after.keys()])) {
+      if (!samePreference(before.get(id), after.get(id))) changedIds.add(id)
+    }
+    if (changedIds.size === 0) return { preference, undo: null }
+
+    const account = accountLogin.trim().toLowerCase()
+    const snapshots = (source: Map<string, InboxPreference>) =>
+      [...changedIds].map((pullId) => {
+        const row = source.get(pullId)
+        return { pullId, ...(row ? { preference: plainPreference(row) } : {}) }
       })
-      while (this.inboxUndoTokens.size > MAX_INBOX_UNDO_TOKENS) {
-        const oldest = this.inboxUndoTokens.keys().next().value
-        if (oldest === undefined) break
-        this.inboxUndoTokens.delete(oldest)
-      }
-      return { preference, undo: token }
+    const token: InboxUndoToken = {
+      id: ++this.nextInboxUndoId,
+      accountLogin: account,
+      expiresAt: Date.now() + INBOX_UNDO_TTL_MS,
+    }
+    this.pruneInboxUndoTokens(Date.now())
+    this.invalidateUndoTokens(account, changedIds)
+    this.inboxUndoTokens.set(token.id, {
+      token,
+      before: snapshots(before),
+      after: snapshots(after),
     })
+    while (this.inboxUndoTokens.size > MAX_INBOX_UNDO_TOKENS) {
+      const oldest = this.inboxUndoTokens.keys().next().value
+      if (oldest === undefined) break
+      this.inboxUndoTokens.delete(oldest)
+    }
+    return { preference, undo: token }
   }
 
   private invalidateUndoForChangedRows(
@@ -437,7 +694,48 @@ export class GitHubClient {
       run: async () => {
         // Read the group when the job runs: it may not be loaded yet, and team repos change.
         const group = this.collections.groups.collection.get(groupId)
-        if (group) await syncGroupPulls(this.graphql, group, this.collections.pulls)
+        if (!this.auth.getToken() || !group) return
+        const authGeneration = this.authGeneration
+        await this.collections.pulls.collection.preload()
+        if (authGeneration !== this.authGeneration) return
+        const result = await fetchGroupPulls(this.graphql, group)
+        if (authGeneration !== this.authGeneration) return
+        const priorRows = [...this.collections.pulls.collection.values()].filter(
+          (row) => row.groupId === groupId,
+        )
+        const verified = result.complete
+          ? await verifyMissingPulls(this.graphql, priorRows, result.rows, groupId)
+          : undefined
+        await this.enqueueInbox(async () => {
+          if (authGeneration !== this.authGeneration || !this.auth.getToken()) return
+          await applyGroupPulls(
+            group,
+            result,
+            this.collections.pulls,
+            this.collections.pullDetails,
+            verified,
+          )
+          for (const [pullId, state] of this.confirmedPullStates) {
+            if ([...this.collections.pulls.collection.values()].some((row) => row.id === pullId)) {
+              await updatePullLifecycleCopies(
+                this.collections.pulls,
+                pullId,
+                state.state,
+                state.observedAt,
+              )
+            }
+          }
+          const account = this.activeInboxAccount
+          if (account) {
+            await reconcileInboxPreferences(
+              this.collections.inboxPreferences,
+              account,
+              [...this.collections.pulls.collection.values()],
+              Date.now(),
+              [...this.collections.groups.collection.values()],
+            )
+          }
+        })
       },
     }
   }
@@ -448,18 +746,38 @@ export class GitHubClient {
   }
 
   /** Keeps a pull request's detail and files fresh while a view shows it. */
-  watchPull(repo: string, number: number): () => void {
+  watchPull(repo: string, number: number, accountLogin?: string): () => void {
+    if (accountLogin) this.activeInboxAccount = accountLogin.trim().toLowerCase()
     return this.poller.watch({
       key: jobKeys.pull(repo, number),
       activeMs: ACTIVE_MS,
       idleMs: Number.POSITIVE_INFINITY,
       resource: "graphql",
       run: async () => {
-        await syncPullDetail(this.graphql, repo, number, this.collections.pullDetails)
-        const detail = this.collections.pullDetails.collection.get(prKey(repo, number))
-        if (detail) {
-          await syncPullFiles(this.rest, repo, number, detail.headOid, this.collections.pullFiles)
-        }
+        if (!this.auth.getToken()) return
+        const authGeneration = this.authGeneration
+        const observedAt = new Date().toISOString()
+        const detail = await fetchPullDetail(this.graphql, repo, number)
+        let committed = false
+        await this.enqueueInbox(async () => {
+          if (authGeneration !== this.authGeneration || !this.auth.getToken()) return
+          const accepted = await this.observePullLifecycle(
+            detail,
+            observedAt,
+            accountLogin ?? this.activeInboxAccount ?? undefined,
+          )
+          if (!accepted) return
+          await this.collections.pullDetails.upsert([detail])
+          committed = true
+        })
+        if (!committed) return
+        if (authGeneration !== this.authGeneration) return
+        const files = await fetchPullFiles(this.rest, repo, number, detail.headOid)
+        if (!files) return
+        await this.enqueueInbox(async () => {
+          if (authGeneration !== this.authGeneration || !this.auth.getToken()) return
+          await this.collections.pullFiles.upsert([files])
+        })
       },
     })
   }
@@ -583,11 +901,61 @@ export class GitHubClient {
     await this.refresh(jobKeys.pull(repo, number))
   }
 
-  async merge(repo: string, number: number, method: MergeMethod) {
+  async merge(
+    repo: string,
+    number: number,
+    method: MergeMethod,
+    accountLogin: string,
+  ): Promise<{ inboxError?: unknown }> {
+    const authGeneration = this.authGeneration
     const detail = this.collections.pullDetails.collection.get(prKey(repo, number))
     if (!detail) throw new Error("Pull request is not loaded")
     await reviews.mergePull(this.rest, repo, number, method, detail.headOid)
-    await this.refresh(jobKeys.pull(repo, number))
+    const inboxError = await this.enqueueInbox(async () => {
+      if (authGeneration !== this.authGeneration) {
+        return new Error("The account changed after GitHub merged the pull request")
+      }
+      const observedAt = new Date().toISOString()
+      this.confirmedPullStates.set(detail.id, { state: "MERGED", observedAt })
+      this.notifyInboxLifecycle()
+      try {
+        await this.collections.pulls.collection.preload()
+      } catch (error) {
+        return error
+      }
+      const known = [...this.collections.pulls.collection.values()].find(
+        (pull) => pull.id === detail.id,
+      )
+      const merged = known
+        ? { ...known, state: "MERGED" as const, stateObservedAt: observedAt }
+        : pullFromDetail(detail, observedAt)
+      let saveError: unknown
+      try {
+        await updatePullLifecycleCopies(
+          this.collections.pulls,
+          detail.id,
+          "MERGED",
+          observedAt,
+          merged,
+        )
+      } catch (error) {
+        saveError = error
+      }
+      try {
+        await this.mutateInboxNow(accountLogin, merged, () =>
+          settleInboxPullState(this.collections.inboxPreferences, accountLogin, merged),
+        )
+      } catch (error) {
+        saveError ??= error
+      }
+      return saveError
+    })
+    try {
+      await this.refresh(jobKeys.pull(repo, number))
+    } catch {
+      // The remote merge already succeeded; refresh status is reported by the poller.
+    }
+    return inboxError === undefined ? {} : { inboxError }
   }
 
   async rerunRun(repo: string, runId: number, onlyFailed: boolean) {
@@ -663,9 +1031,41 @@ function plainPreference(row: InboxPreference | undefined): InboxPreference | un
       reviewRequests: [...row.snapshot.reviewRequests],
       failed: row.snapshot.failed,
     },
+    terminalState: row.terminalState,
+    terminalObservedAt: row.terminalObservedAt,
     changedAt: row.changedAt,
     activeOrder: row.activeOrder,
     pinOrder: row.pinOrder,
+  }
+}
+
+function pullFromDetail(detail: PullRequestDetail, observedAt: string): PullRequest {
+  return {
+    key: `me:${detail.id}`,
+    groupId: "me",
+    id: detail.id,
+    repo: detail.repo,
+    number: detail.number,
+    title: detail.title,
+    url: detail.url,
+    author: detail.author?.login ?? null,
+    authorAvatarUrl: detail.author?.avatarUrl ?? null,
+    isDraft: detail.isDraft,
+    createdAt: detail.createdAt,
+    updatedAt: detail.createdAt,
+    syncedAt: observedAt,
+    state: "MERGED",
+    stateObservedAt: observedAt,
+    headOid: detail.headOid,
+    headRef: detail.headRef,
+    baseRef: detail.baseRef,
+    reviewDecision: detail.reviewDecision,
+    checkState: null,
+    labels: [],
+    reviewRequests: [],
+    comments: 0,
+    additions: detail.additions,
+    deletions: detail.deletions,
   }
 }
 
