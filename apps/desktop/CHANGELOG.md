@@ -1,5 +1,13 @@
 # @github-client/desktop
 
+## 0.7.1
+
+### Patch Changes
+
+- [#35](https://github.com/Yis-company/GitHub-client/pull/35) [`7331ba2`](https://github.com/Yis-company/GitHub-client/commit/7331ba29885cbc89e8aefaa4b5b755362c68afd9) Thanks [@ybtam](https://github.com/ybtam)! - Reveal inbox section headings while dragging and automatically settle confirmed closed or merged pull requests.
+
+- [#37](https://github.com/Yis-company/GitHub-client/pull/37) [`a0599c6`](https://github.com/Yis-company/GitHub-client/commit/a0599c62742892985ece692b8088467da01c46cd) Thanks [@ybtam](https://github.com/ybtam)! - Stop automatically fetching starred repositories and their pull requests. Remove old Starred feed entries on startup while preserving personal, organization, and team feeds.
+
 ## 0.7.0
 
 ### Minor Changes
