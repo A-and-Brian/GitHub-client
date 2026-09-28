@@ -1,5 +1,17 @@
 # @github-client/desktop
 
+## 0.7.0
+
+### Minor Changes
+
+- [#32](https://github.com/Yis-company/GitHub-client/pull/32) [`81bfbd4`](https://github.com/Yis-company/GitHub-client/commit/81bfbd4d049abaafa251c8a64d732ebdaae8bf3a) Thanks [@ybtam](https://github.com/ybtam)! - Add a repository Releases tab with release notes, asset links, pagination, and refresh support.
+
+- [#34](https://github.com/Yis-company/GitHub-client/pull/34) [`474bd2e`](https://github.com/Yis-company/GitHub-client/commit/474bd2e579988321bb591b7334ebdbf2a274f8e5) Thanks [@ybtam](https://github.com/ybtam)! - Show approval actions for pending pull request workflows in the checks views.
+
+### Patch Changes
+
+- [#31](https://github.com/Yis-company/GitHub-client/pull/31) [`8cf4d1a`](https://github.com/Yis-company/GitHub-client/commit/8cf4d1aabe1434788766252d2f20840af66068e0) Thanks [@ybtam](https://github.com/ybtam)! - Keep repository headers and branch controls fixed while the file tree and content preview fill the available height and scroll independently. Make organization and team headers more compact while keeping their titles prominent.
+
 ## 0.6.0
 
 ### Minor Changes
