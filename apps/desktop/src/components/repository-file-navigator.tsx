@@ -274,10 +274,18 @@ export function RepositoryFileNavigator({
   )
 
   return (
-    <div ref={containerRef} className="min-w-0 @container/repository-code">
+    <div
+      ref={containerRef}
+      className="@container/repository-code flex min-h-0 min-w-0 flex-1 flex-col"
+    >
       {narrow ? (
         <>
-          <Button variant="outline" size="sm" className="mb-3" onClick={() => setDrawerOpen(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mb-3 shrink-0"
+            onClick={() => setDrawerOpen(true)}
+          >
             <FolderIcon /> Files
           </Button>
           <Dialog open={drawerOpen} onOpenChange={setDrawerOpen}>
@@ -290,14 +298,14 @@ export function RepositoryFileNavigator({
           </Dialog>
         </>
       ) : (
-        <div className="grid min-h-0 grid-cols-[minmax(12rem,28%)_minmax(0,1fr)] gap-5">
-          <aside className="flex min-h-0 max-h-[70vh] max-w-80 flex-col overflow-hidden rounded-lg border p-2">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(12rem,28%)_minmax(0,1fr)] gap-5">
+          <aside className="flex h-full min-h-0 max-w-80 flex-col overflow-hidden rounded-lg border p-2">
             {navigation}
           </aside>
-          <div className="min-w-0">{children}</div>
+          <div className="min-h-0 min-w-0 overflow-auto">{children}</div>
         </div>
       )}
-      {narrow && children}
+      {narrow && <div className="min-h-0 flex-1 overflow-auto">{children}</div>}
     </div>
   )
 }

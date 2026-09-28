@@ -38,6 +38,52 @@ test("repository code lazily browses files and keeps the preview in sync with th
   await expect(page.getByRole("heading", { name: "Repository guide" })).toBeVisible()
 })
 
+test("repository code keeps its header fixed while a long README scrolls inside the preview", async ({
+  page,
+}) => {
+  await fakeGitHub(page)
+  await page.route("**/repos/acme/api/readme?*", async (route) => {
+    if (route.request().headers().accept?.includes("application/vnd.github.html+json")) {
+      const paragraphs = Array.from(
+        { length: 60 },
+        (_, index) =>
+          `<p>README paragraph ${index + 1} with enough text to occupy several lines.</p>`,
+      ).join("")
+      await route.fulfill({ status: 200, contentType: "text/html", body: paragraphs })
+      return
+    }
+    await route.fallback()
+  })
+  await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
+  await page.goto("/#/repo/acme/api")
+  await expect(page.getByText("README paragraph 60")).toBeVisible()
+
+  const geometry = await page
+    .getByRole("heading", { name: "README" })
+    .locator("xpath=../..")
+    .evaluate((section) => {
+      const preview = section.parentElement
+      const branch = document.querySelector<HTMLSelectElement>('select[aria-label="Branch"]')
+      if (!(preview instanceof HTMLElement) || !branch)
+        throw new Error("Repository panes unavailable")
+      const branchTop = branch.getBoundingClientRect().top
+      preview.scrollTop = preview.scrollHeight
+      return {
+        pageScrollTop: document.scrollingElement?.scrollTop,
+        previewScrollTop: preview.scrollTop,
+        previewScrollHeight: preview.scrollHeight,
+        previewClientHeight: preview.clientHeight,
+        branchTop,
+        branchTopAfterScroll: branch.getBoundingClientRect().top,
+      }
+    })
+
+  expect(geometry.previewScrollHeight).toBeGreaterThan(geometry.previewClientHeight)
+  expect(geometry.previewScrollTop).toBeGreaterThan(0)
+  expect(geometry.pageScrollTop).toBe(0)
+  expect(geometry.branchTopAfterScroll).toBe(geometry.branchTop)
+})
+
 test("narrow repository code opens the file drawer and returns focus after selection", async ({
   page,
 }) => {

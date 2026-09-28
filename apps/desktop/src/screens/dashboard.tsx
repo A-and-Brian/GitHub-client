@@ -171,7 +171,7 @@ export function GroupDashboard({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b px-6 py-6 md:px-10">
+      <header className="shrink-0 border-b px-6 py-4 md:px-10">
         <div className="mx-auto max-w-5xl">
           <div className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
             <Link to="/" className="hover:text-foreground">
@@ -193,55 +193,60 @@ export function GroupDashboard({
             ) : null}
             <span>{slug ? "Team" : "Organization"}</span>
           </div>
-          <div className="mt-3 flex items-start gap-3">
-            <div className="rounded-lg border bg-muted p-2.5">
-              {slug ? <UsersIcon className="size-5" /> : <Building2Icon className="size-5" />}
+          <div className="mt-2 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg border bg-muted p-2.5">
+                {slug ? <UsersIcon className="size-5" /> : <Building2Icon className="size-5" />}
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {slug ? `Team in ${org}` : "Organization workspace"}
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {slug ? `Team in ${org}` : "Organization workspace"}
-              </p>
-            </div>
+            <nav
+              aria-label={`${title} navigation`}
+              className="flex flex-wrap gap-x-5 gap-y-2 border-b-0 text-sm"
+            >
+              <Link
+                to={slug ? "/team/$org/$slug" : "/org/$org"}
+                params={slug ? { org, slug } : { org }}
+                search={{ ...routeSearch, tab: "overview" }}
+                className={
+                  tab === "overview"
+                    ? "border-b-2 border-primary pb-2 font-medium"
+                    : "pb-2 text-muted-foreground hover:text-foreground"
+                }
+              >
+                Overview
+              </Link>
+              <Link
+                to={slug ? "/team/$org/$slug" : "/org/$org"}
+                params={slug ? { org, slug } : { org }}
+                search={{ ...routeSearch, tab: "repositories" }}
+                className={
+                  tab === "repositories"
+                    ? "border-b-2 border-primary pb-2 font-medium"
+                    : "pb-2 text-muted-foreground hover:text-foreground"
+                }
+              >
+                Repositories
+              </Link>
+              <Link
+                to={slug ? "/team/$org/$slug" : "/org/$org"}
+                params={slug ? { org, slug } : { org }}
+                search={{ ...routeSearch, tab: "pulls" }}
+                className={
+                  tab === "pulls"
+                    ? "border-b-2 border-primary pb-2 font-medium"
+                    : "pb-2 text-muted-foreground hover:text-foreground"
+                }
+              >
+                Pull requests
+              </Link>
+            </nav>
           </div>
-          <nav aria-label={`${title} navigation`} className="mt-6 flex gap-5 border-b-0 text-sm">
-            <Link
-              to={slug ? "/team/$org/$slug" : "/org/$org"}
-              params={slug ? { org, slug } : { org }}
-              search={{ ...routeSearch, tab: "overview" }}
-              className={
-                tab === "overview"
-                  ? "border-b-2 border-primary pb-2 font-medium"
-                  : "pb-2 text-muted-foreground hover:text-foreground"
-              }
-            >
-              Overview
-            </Link>
-            <Link
-              to={slug ? "/team/$org/$slug" : "/org/$org"}
-              params={slug ? { org, slug } : { org }}
-              search={{ ...routeSearch, tab: "repositories" }}
-              className={
-                tab === "repositories"
-                  ? "border-b-2 border-primary pb-2 font-medium"
-                  : "pb-2 text-muted-foreground hover:text-foreground"
-              }
-            >
-              Repositories
-            </Link>
-            <Link
-              to={slug ? "/team/$org/$slug" : "/org/$org"}
-              params={slug ? { org, slug } : { org }}
-              search={{ ...routeSearch, tab: "pulls" }}
-              className={
-                tab === "pulls"
-                  ? "border-b-2 border-primary pb-2 font-medium"
-                  : "pb-2 text-muted-foreground hover:text-foreground"
-              }
-            >
-              Pull requests
-            </Link>
-          </nav>
         </div>
       </header>
       <div hidden={tab !== "pulls"} className={tab === "pulls" ? "min-h-0 flex-1" : "hidden"}>

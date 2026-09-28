@@ -40,6 +40,11 @@ test("capture wide and narrow conversation in light and dark themes", async ({
   await fakeGitHub(page)
   await signIn(page)
   await page.goto("/#/pr/acme/api/7?tab=conversation")
+  await expect(page.locator(".pull-content-body")).toBeVisible()
+  await expect(page.getByText(/Awaiting refresh/)).toHaveCount(0)
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }).locator(".animate-spin"),
+  ).toHaveCount(0)
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => {
       document.documentElement.classList.remove("light", "dark")
