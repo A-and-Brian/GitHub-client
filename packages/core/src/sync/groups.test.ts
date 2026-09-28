@@ -17,7 +17,7 @@ const repo = (fullName: string) => {
   }
 }
 
-test("builds me, org, team, and starred groups", async () => {
+test("builds me, organization, and team groups without requesting starred repositories", async () => {
   const gh = fakeGitHub([
     { path: "/user/orgs?per_page=100", body: [{ login: "zeta" }, { login: "acme" }] },
     {
@@ -31,7 +31,6 @@ test("builds me, org, team, and starred groups", async () => {
         },
       ],
     },
-    { path: "/user/starred?per_page=100", body: [repo("oss/lib")] },
     {
       path: "/orgs/acme/teams/core/repos?per_page=100",
       body: [repo("acme/api"), repo("acme/web")],
@@ -45,13 +44,7 @@ test("builds me, org, team, and starred groups", async () => {
   )
 
   const groups = [...collections.groups.collection.values()].sort((a, b) => a.order - b.order)
-  expect(groups.map((g) => g.id)).toEqual([
-    "me",
-    "org:acme",
-    "org:zeta",
-    "team:acme/core",
-    "starred",
-  ])
+  expect(groups.map((g) => g.id)).toEqual(["me", "org:acme", "org:zeta", "team:acme/core"])
   expect(collections.groups.collection.get("team:acme/core")?.repos).toEqual([
     "acme/api",
     "acme/web",
@@ -60,7 +53,9 @@ test("builds me, org, team, and starred groups", async () => {
     parentSlug: "engineering",
     parentName: "Engineering",
   })
-  expect(collections.repos.collection.has("oss/lib")).toBe(true)
+  expect(collections.repos.collection.has("acme/api")).toBe(true)
+  expect(collections.repos.collection.has("oss/lib")).toBe(false)
+  expect(gh.requests.some((request) => request.path.startsWith("/user/starred"))).toBe(false)
 })
 
 test("discovers organizations and teams across REST pages without conflating same-named teams", async () => {
@@ -82,7 +77,6 @@ test("discovers organizations and teams across REST pages without conflating sam
       path: "/user/teams?per_page=100&page=2",
       body: [{ name: "Core", slug: "core", organization: { login: "other" } }],
     },
-    { path: "/user/starred?per_page=100", body: [] },
     { path: "/orgs/acme/teams/core/repos?per_page=100", body: [] },
     { path: "/orgs/other/teams/core/repos?per_page=100", body: [] },
   ])
@@ -96,19 +90,77 @@ test("discovers organizations and teams across REST pages without conflating sam
   expect(collections.groups.collection.has("team:acme/core")).toBe(true)
   expect(collections.groups.collection.has("team:other/core")).toBe(true)
   expect(gh.requests.map((request) => request.path)).toContain("/user/teams?per_page=100&page=2")
+  expect(gh.requests.some((request) => request.path.startsWith("/user/starred"))).toBe(false)
+})
+
+test("retains cached organization and team membership when lists are unchanged", async () => {
+  const gh = fakeGitHub([
+    { path: "/user/orgs?per_page=100", body: [{ login: "acme" }], etag: "orgs" },
+    {
+      path: "/user/teams?per_page=100",
+      body: [{ name: "Core", slug: "core", organization: { login: "acme" } }],
+      etag: "teams",
+    },
+    {
+      path: "/orgs/acme/teams/core/repos?per_page=100",
+      body: [repo("acme/api")],
+      etag: "team-repos",
+    },
+  ])
+  const collections = createCollections()
+  const rest = new RestClient({ fetch: gh.fetch, getToken: () => "t" })
+  await syncGroups(rest, collections.groups, collections.repos)
+  await collections.groups.upsert([
+    { id: "starred", kind: "starred", name: "Starred", order: 10000, repos: ["oss/lib"] },
+  ])
+  await syncGroups(rest, collections.groups, collections.repos)
+
+  expect(collections.groups.collection.has("org:acme")).toBe(true)
+  expect(collections.groups.collection.get("team:acme/core")?.repos).toEqual(["acme/api"])
+  expect(collections.groups.collection.has("starred")).toBe(false)
+  expect(gh.requests.some((request) => request.path.startsWith("/user/starred"))).toBe(false)
 })
 
 test("search queries stay under GitHub's length limit", () => {
   const repos = Array.from({ length: 40 }, (_, i) => `some-org/repository-number-${i}`)
-  const queries = groupSearchQueries({ id: "starred", kind: "starred", name: "", order: 0, repos })
+  const queries = groupSearchQueries({
+    id: "team:some-org/core",
+    kind: "team",
+    name: "core",
+    org: "some-org",
+    order: 1,
+    repos,
+  })
   expect(queries.length).toBeGreaterThan(1)
   for (const q of queries) expect(q.length).toBeLessThanOrEqual(240)
   const covered = queries.flatMap((q) => q.match(/repo:\S+/g) ?? [])
   expect(covered).toHaveLength(40)
 })
 
-test("empty repo lists produce no queries", () => {
+test("legacy starred groups produce no queries", () => {
   expect(
     groupSearchQueries({ id: "starred", kind: "starred", name: "", order: 0, repos: [] }),
+  ).toEqual([])
+  expect(
+    groupSearchQueries({
+      id: "starred",
+      kind: "starred",
+      name: "",
+      order: 0,
+      repos: ["oss/lib"],
+    }),
+  ).toEqual([])
+})
+
+test("empty teams produce no queries", () => {
+  expect(
+    groupSearchQueries({
+      id: "team:acme/core",
+      kind: "team",
+      name: "acme/Core",
+      org: "acme",
+      order: 1000,
+      repos: [],
+    }),
   ).toEqual([])
 })

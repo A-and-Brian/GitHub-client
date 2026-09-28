@@ -31,17 +31,16 @@ export const toRepo = (r: RestRepo): Repo => ({
 
 /**
  * Builds the automatic groups: everything involving the viewer, each org,
- * each team the viewer belongs to, and starred repos.
+ * and each team the viewer belongs to.
  */
 export async function syncGroups(
   rest: RestClient,
   groups: SyncedCollection<Group, string>,
   repos: SyncedCollection<Repo, string>,
 ): Promise<void> {
-  const [orgResult, teamResult, starred] = await Promise.all([
+  const [orgResult, teamResult] = await Promise.all([
     rest.pollAll<{ login: string }>("/user/orgs", {}, { maxPages: 100 }),
     rest.pollAll<RestTeam>("/user/teams", {}, { maxPages: 100 }),
-    rest.pollAll<RestRepo>("/user/starred", {}, { maxPages: 10, recencySorted: true }),
   ])
   const orgs =
     orgResult.status === "ok"
@@ -99,16 +98,6 @@ export async function syncGroups(
     })
   })
 
-  const starredRepos = starred.status === "ok" ? starred.data.map(toRepo) : undefined
-  if (starredRepos) knownRepos.push(...starredRepos)
-  next.push({
-    id: "starred",
-    kind: "starred",
-    name: "Starred",
-    order: 10_000,
-    repos: starredRepos?.map((r) => r.fullName) ?? groups.collection.get("starred")?.repos ?? [],
-  })
-
   await repos.upsert(dedupe(knownRepos))
   await groups.replace(next, () => true)
 }
@@ -124,6 +113,7 @@ const MAX_QUERY_LENGTH = 240
  * limited to 256 characters, so repo lists are split into several queries.
  */
 export function groupSearchQueries(group: Group): string[] {
+  if (group.kind === "starred") return []
   const base = "is:pr is:open archived:false"
   if (group.kind === "me") return [`${base} involves:@me`]
   if (group.kind === "org") return [`${base} org:${group.org}`]

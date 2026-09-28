@@ -61,6 +61,124 @@ test("restore prefers the stored token and can skip GITHUB_TOKEN", async () => {
   expect(envOnly.auth.getToken()).toBe("env")
 })
 
+test("prepareSync removes only legacy starred rows and is safe to repeat", async () => {
+  const client = new GitHubClient(platform("stored", null))
+  const orgPull = { ...pull, key: "org:acme:PR_1", groupId: "org:acme" }
+  const personalPull = { ...pull, key: "me:PR_1", groupId: "me" }
+  const starredPull = { ...pull, key: "starred:PR_1", groupId: "starred" }
+  const starredOnlyPull = {
+    ...pull,
+    key: "starred:PR_2",
+    groupId: "starred",
+    id: "PR_2",
+    number: 2,
+  }
+  await client.collections.groups.upsert([
+    { id: "me", kind: "me", name: "Involving me", order: 0 },
+    { id: "org:acme", kind: "org", name: "acme", org: "acme", order: 100 },
+    { id: "starred", kind: "starred", name: "Starred", order: 10000, repos: ["acme/api"] },
+  ])
+  await client.collections.pulls.upsert([orgPull, personalPull, starredPull, starredOnlyPull])
+  await client.collections.repos.upsert([
+    {
+      fullName: "acme/api",
+      owner: "acme",
+      name: "api",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      pushedAt: null,
+    },
+  ])
+  await client.collections.inboxPreferences.upsert([
+    {
+      key: "yi:PR_1",
+      accountLogin: "yi",
+      pullId: "PR_1",
+      state: "settled",
+      snoozedUntil: null,
+      snapshot: { headOid: null, reviewRequests: [], failed: false },
+      changedAt: "2026-09-26T00:00:00Z",
+    },
+  ])
+  await client.collections.pullFiles.upsert([{ key: "acme/api#1", headOid: "abc", files: [] }])
+  client.addDraft({
+    prKey: "acme/api#1",
+    path: "src/index.ts",
+    line: 1,
+    startLine: null,
+    side: "RIGHT",
+    body: "Keep this draft",
+  })
+
+  await client.prepareSync()
+  await client.prepareSync()
+
+  expect(client.collections.groups.collection.has("starred")).toBe(false)
+  expect(client.collections.groups.collection.has("org:acme")).toBe(true)
+  expect(client.collections.pulls.collection.has("starred:PR_1")).toBe(false)
+  expect(client.collections.pulls.collection.has("starred:PR_2")).toBe(false)
+  expect(client.collections.pulls.collection.has("org:acme:PR_1")).toBe(true)
+  expect(client.collections.pulls.collection.has("me:PR_1")).toBe(true)
+  expect(client.collections.repos.collection.has("acme/api")).toBe(true)
+  expect(client.collections.inboxPreferences.collection.has("yi:PR_1")).toBe(true)
+  expect(client.collections.pullFiles.collection.has("acme/api#1")).toBe(true)
+  expect([...client.collections.drafts.values()].map((draft) => draft.body)).toEqual([
+    "Keep this draft",
+  ])
+})
+
+test("prepareSync persists legacy starred cleanup before a new client loads", async () => {
+  const db = tempDatabase()
+  try {
+    const client = new GitHubClient(platform("stored", null, db.open()))
+    await client.collections.groups.upsert([
+      { id: "starred", kind: "starred", name: "Starred", order: 10000, repos: ["oss/lib"] },
+      { id: "org:acme", kind: "org", name: "acme", org: "acme", order: 100 },
+    ])
+    await client.collections.pulls.upsert([
+      { ...pull, key: "starred:PR_1", groupId: "starred" },
+      { ...pull, key: "org:acme:PR_1", groupId: "org:acme" },
+    ])
+
+    await client.prepareSync()
+
+    const reloaded = new GitHubClient(platform(null, null, db.open()))
+    await Promise.all([
+      reloaded.collections.groups.collection.preload(),
+      reloaded.collections.pulls.collection.preload(),
+    ])
+    expect(reloaded.collections.groups.collection.has("starred")).toBe(false)
+    expect(reloaded.collections.groups.collection.has("org:acme")).toBe(true)
+    expect(reloaded.collections.pulls.collection.has("starred:PR_1")).toBe(false)
+    expect(reloaded.collections.pulls.collection.has("org:acme:PR_1")).toBe(true)
+  } finally {
+    db.close()
+  }
+})
+
+test("legacy starred groups never register, watch, or refresh a pull search", async () => {
+  const github = fakeGitHub([
+    { path: "/user/orgs?per_page=100", status: 500 },
+    { path: "/user/teams?per_page=100", status: 500 },
+  ])
+  const client = new GitHubClient({ ...platform("stored", null), fetch: github.fetch })
+  await client.collections.groups.upsert([
+    { id: "starred", kind: "starred", name: "Starred", order: 10000, repos: ["oss/lib"] },
+  ])
+  await client.auth.restore()
+
+  client.startSync()
+  const release = client.watchGroup("starred")
+  await client.refresh(jobKeys.groupPulls("starred"))
+  await client.refresh(jobKeys.groups)
+  client.poller.stop()
+  release()
+
+  expect(github.graphqlCalls().map((request) => request.body)).toEqual([])
+  expect(github.requests.some((request) => request.path.startsWith("/user/starred"))).toBe(false)
+})
+
 test("sign-out forgets the token and deletes cached data and drafts", async () => {
   const client = new GitHubClient(platform("stored", null))
   await client.auth.restore()

@@ -130,6 +130,45 @@ test("home and scoped dashboards discover repositories without PRs and retain de
   await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
 })
 
+test("startup and reload sync personal and organization feeds without fetching starred repos", async ({
+  page,
+}) => {
+  const { requests } = await setup(page)
+  const searchQueries = () =>
+    requests.flatMap(({ path, body }) => {
+      const operation = body as { query?: string; variables?: { q?: string } } | null
+      return path === "/graphql" && operation?.query?.includes("SearchPulls")
+        ? [operation.variables?.q ?? ""]
+        : []
+    })
+
+  const expectFeeds = async () => {
+    await expect
+      .poll(searchQueries)
+      .toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("involves:@me"),
+          expect.stringContaining("org:acme"),
+          expect.stringContaining("repo:acme/handbook"),
+        ]),
+      )
+    const navigation = page.getByRole("complementary")
+    await expect(navigation.getByRole("link", { name: "Involving me", exact: true })).toBeVisible()
+    await expect(navigation.getByRole("link", { name: "acme", exact: true })).toBeVisible()
+    await expect(navigation.getByRole("link", { name: "Backend", exact: true })).toBeVisible()
+    await expect(navigation.getByRole("link", { name: "Starred", exact: true })).toHaveCount(0)
+    expect(requests.filter(({ path }) => path === "/user/starred")).toHaveLength(0)
+  }
+
+  await expectFeeds()
+  await page.getByRole("complementary").getByRole("link", { name: "Involving me" }).click()
+  await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
+  await expect(page.getByText("Speed up the diff view", { exact: true }).first()).toBeVisible()
+  requests.length = 0
+  await page.reload()
+  await expectFeeds()
+})
+
 test("catalog pagination retries a failed later page without losing or duplicating rows", async ({
   page,
 }) => {
