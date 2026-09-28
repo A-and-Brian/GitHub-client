@@ -23,6 +23,15 @@ export type RepositoryResourceKey =
       pageSize: number
     }
   | {
+      kind: "releases"
+      host: string
+      accountLogin: string
+      owner: string
+      repo: string
+      page: number
+      pageSize: number
+    }
+  | {
       kind: "contents"
       host: string
       accountLogin: string
@@ -173,7 +182,7 @@ export class RepositoryCache {
   }
 
   paginated<T>(
-    key: Extract<RepositoryResourceKey, { kind: "catalog" | "branches" | "pulls" }>,
+    key: Extract<RepositoryResourceKey, { kind: "catalog" | "branches" | "pulls" | "releases" }>,
     fetchPage: (page: number) => Promise<RepositoryPage<T>>,
     getId: (item: T) => string | number,
   ): PaginatedResourceHandle<T> {
@@ -336,7 +345,12 @@ export class RepositoryCache {
       if (!force && existing.loaded && now - existing.fetchedAt < FRESH_MS) return
     }
     const pending = this.inFlight.get(id)
-    if (pending) return pending
+    if (pending) {
+      if (!force || existing?.refreshing !== false) return pending
+      await pending
+      if (!this.isCurrent(token)) return
+      return this.loadResource(key, fetcher, true)
+    }
     this.failedMorePages.delete(id)
     if (existing) {
       this.memory.set(id, { ...existing, lastAccessedAt: now, refreshing: true, error: undefined })
@@ -716,6 +730,16 @@ function resourceKey(key: RepositoryResourceKey): string {
         key.repo.toLowerCase(),
       ])
     case "branches":
+      return JSON.stringify([
+        key.host,
+        normalizeAccount(key.accountLogin),
+        key.kind,
+        key.owner.toLowerCase(),
+        key.repo.toLowerCase(),
+        key.page,
+        key.pageSize,
+      ])
+    case "releases":
       return JSON.stringify([
         key.host,
         normalizeAccount(key.accountLogin),

@@ -4,6 +4,7 @@ import {
   getContents,
   getReadme,
   listBranches,
+  listReleases,
   listRepositories,
   type RepositorySummary,
 } from "./repositories"
@@ -87,6 +88,82 @@ test("lists branches without truncating pages and encodes repository path segmen
   expect(urls[0]?.pathname).toBe("/repos/acme%2Fteam/repo%20name/branches")
   expect(urls[0]?.searchParams.get("page")).toBe("3")
   expect(urls[0]?.searchParams.get("per_page")).toBe("100")
+})
+
+test("lists releases with mapped assets, optional fields, paging, and GitHub errors", async () => {
+  const apiRelease = {
+    id: 8,
+    name: "First release",
+    tag_name: "v1.0.0",
+    body: "Notes\nwith spacing",
+    draft: false,
+    prerelease: true,
+    published_at: "2026-09-26T10:00:00Z",
+    html_url: "https://github.com/acme/api/releases/tag/v1.0.0",
+    assets: [
+      {
+        name: "client.zip",
+        size: 2048,
+        browser_download_url: "https://github.com/acme/api/releases/download/v1/client.zip",
+      },
+    ],
+  }
+  const { rest, urls } = scriptedClient([
+    response([apiRelease]),
+    response(
+      Array.from({ length: 100 }, (_, id) => ({
+        ...apiRelease,
+        id,
+        name: null,
+        body: null,
+        published_at: null,
+        draft: true,
+        prerelease: false,
+        assets: [],
+      })),
+    ),
+    response({ message: "Resource not accessible by integration" }, 403),
+  ])
+
+  const first = await listReleases(rest, "acme/team", "api name", 2)
+  expect(first).toEqual({
+    items: [
+      {
+        id: 8,
+        name: "First release",
+        tagName: "v1.0.0",
+        body: "Notes\nwith spacing",
+        draft: false,
+        prerelease: true,
+        publishedAt: "2026-09-26T10:00:00Z",
+        htmlUrl: "https://github.com/acme/api/releases/tag/v1.0.0",
+        assets: [
+          {
+            name: "client.zip",
+            size: 2048,
+            downloadUrl: "https://github.com/acme/api/releases/download/v1/client.zip",
+          },
+        ],
+      },
+    ],
+    hasMore: false,
+  })
+  expect(urls[0]?.pathname).toBe("/repos/acme%2Fteam/api%20name/releases")
+  expect(urls[0]?.searchParams.get("page")).toBe("2")
+  expect(urls[0]?.searchParams.get("per_page")).toBe("100")
+
+  const fullPage = await listReleases(rest, "acme", "api")
+  expect(fullPage.items).toHaveLength(100)
+  expect(fullPage.hasMore).toBe(true)
+  expect(fullPage.items[0]).toMatchObject({
+    name: null,
+    body: null,
+    publishedAt: null,
+    draft: true,
+    prerelease: false,
+    assets: [],
+  })
+  await expect(listReleases(rest, "acme", "api")).rejects.toMatchObject({ status: 403 })
 })
 
 test("preserves slash refs and nested paths through Contents API query encoding", async () => {

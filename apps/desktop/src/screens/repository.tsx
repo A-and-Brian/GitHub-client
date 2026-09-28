@@ -1,5 +1,5 @@
 import { GitHubError } from "@github-client/core"
-import type { ContentEntry, getContents } from "@github-client/core/repositories"
+import type { ContentEntry, getContents, RepositoryRelease } from "@github-client/core/repositories"
 import { Button } from "@github-client/ui/components/button"
 import {
   DropdownMenu,
@@ -28,7 +28,7 @@ import { RunsContent } from "./actions/runs"
 import { Inbox } from "./inbox"
 import { RepositorySettings } from "./repository-settings"
 
-type Tab = "code" | "pulls" | "actions" | "settings"
+type Tab = "code" | "pulls" | "actions" | "releases" | "settings"
 
 export function RepositoryBrowser({
   owner,
@@ -48,9 +48,11 @@ export function RepositoryBrowser({
   const routeSearch = useSearch({ strict: false })
   const [pullsVisited, setPullsVisited] = useState(tab === "pulls")
   const [actionsVisited, setActionsVisited] = useState(tab === "actions")
+  const [releasesVisited, setReleasesVisited] = useState(tab === "releases")
   useEffect(() => {
     if (tab === "pulls") setPullsVisited(true)
     if (tab === "actions") setActionsVisited(true)
+    if (tab === "releases") setReleasesVisited(true)
   }, [tab])
   const repoName = `${owner}/${repo}`
   const identity = { host: client.rest.url("/"), accountLogin: viewer.login, owner, repo }
@@ -61,6 +63,10 @@ export function RepositoryBrowser({
   const branchesResource = useRepositoryPages(
     { ...identity, kind: "branches", page: 1, pageSize: 100 },
     tab === "code" && !summaryError,
+  )
+  const releasesResource = useRepositoryPages(
+    { ...identity, kind: "releases", page: 1, pageSize: 100 },
+    (releasesVisited || tab === "releases") && !summaryError,
   )
   const branches = branchesResource.state.data?.items.map((branch) => branch.name) ?? []
   const moreBranches = branchesResource.state.data?.hasMore ?? false
@@ -86,6 +92,7 @@ export function RepositoryBrowser({
     contents: contentsResource,
     readme: readmeResource,
     branches: branchesResource,
+    releases: releasesResource,
   }
   const retry = (kind: keyof typeof resources) => void resources[kind].retry()
   const activeResources = [
@@ -96,6 +103,7 @@ export function RepositoryBrowser({
           ...(currentRef ? [contentsResource, ...(!path ? [readmeResource] : [])] : []),
         ]
       : []),
+    ...(tab === "releases" ? [releasesResource] : []),
   ]
   const refresh = () => {
     for (const resource of activeResources) void resource.refresh()
@@ -163,6 +171,7 @@ export function RepositoryBrowser({
                 ["code", "Code"],
                 ["pulls", "Pull requests"],
                 ["actions", "Actions"],
+                ["releases", "Releases"],
                 ["settings", "Settings"],
               ] as const
             ).map(([value, label]) => (
@@ -257,6 +266,69 @@ export function RepositoryBrowser({
       {tab === "settings" && (
         <div className="min-h-0 flex-1">
           <RepositorySettings owner={owner} repo={repo} embedded />
+        </div>
+      )}
+      {(releasesVisited || tab === "releases") && (
+        <div
+          hidden={tab !== "releases"}
+          className={tab === "releases" ? "min-h-0 flex-1 overflow-auto px-6 py-5" : "hidden"}
+        >
+          {summaryError ? (
+            <StateMessage
+              error={summaryError}
+              title={`Could not load ${repoName}`}
+              retry={() => retry("summary")}
+            />
+          ) : releasesResource.state.refreshing && !releasesResource.state.data ? (
+            <StateMessage loading />
+          ) : releasesResource.state.error && !releasesResource.state.data ? (
+            <StateMessage
+              error={releasesResource.state.error}
+              title="Could not load releases"
+              retry={() => retry("releases")}
+            />
+          ) : releasesResource.state.error && !releasesResource.state.data?.items.length ? (
+            <div className="mx-auto max-w-4xl">
+              <StateMessage
+                error={releasesResource.state.error}
+                title="Could not refresh releases"
+                retry={() => retry("releases")}
+              />
+              <p className="mt-4 rounded-lg border p-8 text-center text-sm text-muted-foreground">
+                No releases yet.
+              </p>
+            </div>
+          ) : releasesResource.state.data?.items.length ? (
+            <div className="mx-auto max-w-4xl space-y-4">
+              {releasesResource.state.data.items.map((release) => (
+                <ReleaseCard key={release.id} release={release} />
+              ))}
+              {releasesResource.state.error && (
+                <StateMessage
+                  error={releasesResource.state.error}
+                  title="Could not refresh releases"
+                  retry={() => retry("releases")}
+                />
+              )}
+              {releasesResource.state.data.hasMore && (
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    disabled={releasesResource.state.refreshing}
+                    onClick={() => void releasesResource.loadMore()}
+                  >
+                    {releasesResource.state.refreshing ? "Loading…" : "Load more releases"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : releasesResource.state.loaded ? (
+            <p className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
+              No releases yet.
+            </p>
+          ) : (
+            <StateMessage loading />
+          )}
         </div>
       )}
       <div
@@ -480,6 +552,80 @@ export function RepositoryBrowser({
         )}
       </div>
     </div>
+  )
+}
+
+function ReleaseCard({ release }: { release: RepositoryRelease }) {
+  return (
+    <article className="min-w-0 rounded-lg border p-5">
+      <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="break-words text-lg font-semibold">{release.name || release.tagName}</h2>
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+            {release.tagName}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            {release.draft && <span>Draft</span>}
+            {release.prerelease && <span>Pre-release</span>}
+            {release.publishedAt && (
+              <time dateTime={release.publishedAt}>
+                {new Date(release.publishedAt).toLocaleDateString()}
+              </time>
+            )}
+          </div>
+        </div>
+        <a
+          href={release.htmlUrl}
+          onClick={(event) => {
+            event.preventDefault()
+            void openExternal(release.htmlUrl)
+          }}
+          className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Open on GitHub <ExternalLinkIcon className="size-3" />
+        </a>
+      </header>
+      {release.body ? (
+        <details className="mt-4 border-t pt-3">
+          <summary className="cursor-pointer text-sm font-medium">Release notes</summary>
+          <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-muted-foreground">
+            {release.body}
+          </pre>
+        </details>
+      ) : (
+        <p className="mt-4 border-t pt-3 text-sm text-muted-foreground">No release notes</p>
+      )}
+      {release.assets.length > 0 && (
+        <section aria-label="Release assets" className="mt-4 border-t pt-3">
+          <h3 className="text-sm font-medium">Assets</h3>
+          <ul className="mt-2 divide-y">
+            {release.assets.map((asset) => (
+              <li
+                key={`${asset.name}:${asset.downloadUrl}`}
+                className="flex min-w-0 items-center gap-3 py-2"
+              >
+                <a
+                  href={asset.downloadUrl}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    void openExternal(asset.downloadUrl)
+                  }}
+                  className="min-w-0 flex-1 break-all text-sm text-primary hover:underline"
+                >
+                  {asset.name}
+                </a>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {formatSize(asset.size)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Private assets may require GitHub sign-in in your browser.
+          </p>
+        </section>
+      )}
+    </article>
   )
 }
 

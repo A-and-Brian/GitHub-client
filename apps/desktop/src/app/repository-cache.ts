@@ -3,9 +3,11 @@ import {
   getReadme,
   getRepository,
   listBranches,
+  listReleases,
   listRepositories,
   type Page,
   type RepositoryContents,
+  type RepositoryRelease,
   type RepositorySummary,
 } from "@github-client/core/repositories"
 import type {
@@ -17,7 +19,10 @@ import { useEffect, useMemo, useSyncExternalStore } from "react"
 import { useSession } from "./client"
 
 type SingleKey = Extract<RepositoryResourceKey, { kind: "summary" | "contents" | "readme" }>
-type PagedKey = Extract<RepositoryResourceKey, { kind: "catalog" | "branches" | "pulls" }>
+type PagedKey = Extract<
+  RepositoryResourceKey,
+  { kind: "catalog" | "branches" | "pulls" | "releases" }
+>
 type ResourceData = {
   summary: RepositorySummary
   contents: RepositoryContents
@@ -38,7 +43,12 @@ type PullSummary = {
   requested_teams?: { slug: string }[]
   labels?: { name: string; color: string }[]
 }
-type PageItem = { catalog: RepositorySummary; branches: { name: string }; pulls: PullSummary }
+type PageItem = {
+  catalog: RepositorySummary
+  branches: { name: string }
+  pulls: PullSummary
+  releases: RepositoryRelease
+}
 const EMPTY = { loaded: false, refreshing: false, persisted: false, data: undefined } as const
 
 function useHandle<T>(handle: RepositoryResourceHandle<T>, enabled: boolean) {
@@ -100,6 +110,8 @@ export function useRepositoryPages<K extends PagedKey>(key: K, enabled = true) {
           return listRepositories(client.rest, resource.scope, page)
         case "branches":
           return listBranches(client.rest, resource.owner, resource.repo, page)
+        case "releases":
+          return listReleases(client.rest, resource.owner, resource.repo, page)
         case "pulls": {
           const items = await client.rest.get<PullSummary[]>(
             `/repos/${encodeURIComponent(resource.owner)}/${encodeURIComponent(resource.repo)}/pulls`,

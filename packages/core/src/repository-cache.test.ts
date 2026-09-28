@@ -32,6 +32,19 @@ const readmeKey = {
   ref: key.ref,
 }
 const contentKey = (path: string, accountLogin = "Yi") => ({ ...key, path, accountLogin })
+const releasesKey = (overrides: Partial<typeof releaseKeyBase> = {}) => ({
+  ...releaseKeyBase,
+  ...overrides,
+})
+const releaseKeyBase = {
+  kind: "releases" as const,
+  host: key.host,
+  accountLogin: key.accountLogin,
+  owner: key.owner,
+  repo: key.repo,
+  page: 1,
+  pageSize: 2,
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: Error) => void
@@ -46,10 +59,117 @@ test("deduplicates requests and serves a fresh revisit without fetching", async 
   const cache = new RepositoryCache(createCollections().repositoryResources)
   const fetcher = vi.fn(async () => "saved")
   const resource = cache.resource(key, fetcher)
-  await Promise.all([resource.load(), resource.load()])
+  await Promise.all([resource.load(), resource.load({ force: true })])
   await resource.load()
   expect(fetcher).toHaveBeenCalledTimes(1)
   expect(resource.snapshot()).toMatchObject({ loaded: true, data: "saved", persisted: false })
+})
+
+test("a forced refresh waits for a settled response to finish persistence", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = createCollections(database.open()).repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    const persistenceStarted = deferred<void>()
+    const finishPersistence = deferred<void>()
+    const upsert = rows.upsert
+    let gatePersistence = true
+    rows.upsert = async (values) => {
+      if (gatePersistence) {
+        gatePersistence = false
+        persistenceStarted.resolve()
+        await finishPersistence.promise
+      }
+      await upsert(values)
+    }
+    let fetchCount = 0
+    const fetcher = vi.fn(async () => `response ${++fetchCount}`)
+    const resource = cache.resource(key, fetcher)
+
+    const initial = resource.load()
+    await persistenceStarted.promise
+    expect(resource.snapshot()).toMatchObject({ loaded: true, refreshing: false, persisted: false })
+    const refresh = resource.load({ force: true })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    finishPersistence.resolve()
+    await Promise.all([initial, refresh])
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(resource.snapshot()).toMatchObject({ loaded: true, data: "response 2", persisted: true })
+  } finally {
+    database.close()
+  }
+})
+
+test("a forced refresh waiting on persistence is cancelled when its account is cleared", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = createCollections(database.open()).repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    const persistenceStarted = deferred<void>()
+    const finishPersistence = deferred<void>()
+    const upsert = rows.upsert
+    rows.upsert = async (values) => {
+      persistenceStarted.resolve()
+      await finishPersistence.promise
+      await upsert(values)
+    }
+    const fetcher = vi.fn(async () => "saved")
+    const resource = cache.resource(key, fetcher)
+    const initial = resource.load()
+    await persistenceStarted.promise
+    const refresh = resource.load({ force: true })
+    const clear = cache.clearAccount("yi")
+
+    finishPersistence.resolve()
+    await Promise.all([initial, refresh, clear])
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(resource.snapshot()).toMatchObject({ loaded: false, refreshing: false })
+    expect(rows.collection.size).toBe(0)
+  } finally {
+    database.close()
+  }
+})
+
+test("retry during access-denied cleanup starts after the failed request settles", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = createCollections(database.open()).repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    let fetchCount = 0
+    const fetcher = vi.fn(async () => {
+      fetchCount += 1
+      if (fetchCount === 2) throw new GitHubError(403, "forbidden")
+      return `response ${fetchCount}`
+    })
+    const resource = cache.resource(key, fetcher)
+    await resource.load()
+
+    const removalStarted = deferred<void>()
+    const finishRemoval = deferred<void>()
+    const remove = rows.remove
+    rows.remove = async (keys) => {
+      removalStarted.resolve()
+      await finishRemoval.promise
+      await remove(keys)
+    }
+    const failed = resource.retry()
+    await removalStarted.promise
+    expect(resource.snapshot()).toMatchObject({
+      loaded: false,
+      refreshing: false,
+      error: expect.any(GitHubError),
+    })
+    const retry = resource.retry()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    finishRemoval.resolve()
+    await Promise.all([failed, retry])
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(resource.snapshot()).toMatchObject({ loaded: true, data: "response 3", persisted: true })
+  } finally {
+    database.close()
+  }
 })
 
 test("rehydrates a persisted snapshot from a reopened SQLite database", async () => {
@@ -137,6 +257,46 @@ test("paginated refresh stages loaded pages and retries a failed next page", asy
   await resource.load({ force: true })
   expect(resource.snapshot()?.data?.items.map((item) => item.id)).toEqual(["a", "b", "c"])
   expect(resource.snapshot()?.error).toBeUndefined()
+})
+
+test("release pages paginate and stay isolated by host, account, and repository", async () => {
+  const cache = new RepositoryCache(createCollections().repositoryResources)
+  const seen: string[] = []
+  const first = cache.paginated(
+    releasesKey(),
+    async (page) => {
+      seen.push(`main:${page}`)
+      return page === 1
+        ? { items: [{ id: 1 }, { id: 2 }], hasMore: true }
+        : { items: [{ id: 3 }], hasMore: false }
+    },
+    (release) => release.id,
+  )
+  await first.load()
+  await first.loadMore()
+  expect(first.snapshot()?.data).toMatchObject({
+    items: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    pages: 2,
+    hasMore: false,
+  })
+
+  for (const [name, overrides] of [
+    ["account", { accountLogin: "other" }],
+    ["host", { host: "https://github.example/api/v3" }],
+    ["repository", { repo: "other" }],
+  ] as const) {
+    const resource = cache.paginated(
+      releasesKey(overrides),
+      async () => {
+        seen.push(name)
+        return { items: [{ id: name }], hasMore: false }
+      },
+      (release) => release.id,
+    )
+    await resource.load()
+    expect(resource.snapshot()?.data?.items).toEqual([{ id: name }])
+  }
+  expect(seen).toEqual(["main:1", "main:2", "account", "host", "repository"])
 })
 
 test("keeps stale data during refresh errors and saves resolved null and empty pages", async () => {

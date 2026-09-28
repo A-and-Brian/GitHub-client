@@ -34,6 +34,24 @@ export type RepositoryContents =
   | { kind: "directory"; entries: ContentEntry[]; limited: boolean }
   | { kind: "file"; entry: ContentEntry; text: string | null; reason?: string }
 
+export interface RepositoryReleaseAsset {
+  name: string
+  size: number
+  downloadUrl: string
+}
+
+export interface RepositoryRelease {
+  id: number
+  name: string | null
+  tagName: string
+  body: string | null
+  draft: boolean
+  prerelease: boolean
+  publishedAt: string | null
+  htmlUrl: string
+  assets: RepositoryReleaseAsset[]
+}
+
 interface GitHubRepository {
   id: number
   full_name: string
@@ -57,6 +75,18 @@ interface GitHubContent {
   content?: string
   encoding?: string
   submodule_git_url?: string
+}
+
+interface GitHubRelease {
+  id: number
+  name: string | null
+  tag_name: string
+  body: string | null
+  draft: boolean
+  prerelease: boolean
+  published_at: string | null
+  html_url: string
+  assets: Array<{ name: string; size: number; browser_download_url: string }>
 }
 
 const PAGE_SIZE = 100
@@ -98,6 +128,36 @@ export async function listBranches(
     { page, per_page: PAGE_SIZE },
   )
   return { items: branches.map(({ name }) => ({ name })), hasMore: branches.length === PAGE_SIZE }
+}
+
+export async function listReleases(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  page = 1,
+): Promise<Page<RepositoryRelease>> {
+  const releases = await rest.get<GitHubRelease[]>(`${repositoryPath(owner, repo)}/releases`, {
+    page,
+    per_page: PAGE_SIZE,
+  })
+  return {
+    items: releases.map((release) => ({
+      id: release.id,
+      name: release.name,
+      tagName: release.tag_name,
+      body: release.body,
+      draft: release.draft,
+      prerelease: release.prerelease,
+      publishedAt: release.published_at,
+      htmlUrl: release.html_url,
+      assets: release.assets.map((asset) => ({
+        name: asset.name,
+        size: asset.size,
+        downloadUrl: asset.browser_download_url,
+      })),
+    })),
+    hasMore: releases.length === PAGE_SIZE,
+  }
 }
 
 export async function getContents(
