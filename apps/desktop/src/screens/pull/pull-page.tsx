@@ -7,7 +7,7 @@ import { useLiveQuery } from "@tanstack/react-db"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
-import { useClient, useJobStatus, useWatch } from "@/app/client"
+import { useJobStatus, useSession, useWatch } from "@/app/client"
 import { useErrorToast } from "@/app/errors"
 import { useShortcuts } from "@/app/shortcuts"
 import { CheckSummary, CheckSummaryHelp } from "@/components/check-summary"
@@ -53,10 +53,13 @@ export function PullContent({
   active?: boolean
 }) {
   const navigate = useNavigate()
-  const client = useClient()
+  const { client, viewer } = useSession()
   const repo = `${owner}/${name}`
   const key = prKey(repo, number)
-  useWatch((c) => (active ? c.watchPull(repo, number) : () => {}), [repo, number, active])
+  useWatch(
+    (c) => (active ? c.watchPull(repo, number, viewer.login) : () => {}),
+    [repo, number, active, viewer.login],
+  )
   const status = useJobStatus(jobKeys.pull(repo, number))
   const error = status?.error
   useErrorToast(error, { id: `pull-error:${key}`, title: `Could not load ${repo} #${number}` })

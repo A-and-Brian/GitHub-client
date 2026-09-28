@@ -1,9 +1,11 @@
 import type { PullRequest } from "@github-client/core"
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useSession } from "@/app/client"
+import { useErrorToast } from "@/app/errors"
 import { useRepositoryPages } from "@/app/repository-cache"
 
 type RepositoryPull = {
+  inboxObservedAt?: string
   node_id?: string
   number?: number
   title?: string
@@ -49,11 +51,14 @@ function toPullRequest(row: RepositoryPull, repo: string, owner: string): PullRe
     isDraft: row.draft ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    state: "OPEN",
+    syncedAt: row.inboxObservedAt,
     headOid: row.head.sha,
     headRef: row.head.ref,
     baseRef: row.base.ref,
     reviewDecision: null,
     checkState: null,
+    checkSnapshotComplete: false,
     labels: row.labels ?? [],
     reviewRequests: [
       ...(row.requested_reviewers ?? []).map((reviewer) => reviewer.login),
@@ -91,11 +96,53 @@ export function useRepositoryInboxData(repo: string | undefined, active = true) 
       }),
     [rows, repo, owner],
   )
+  const [syncError, setSyncError] = useState<unknown>(null)
+  const [syncing, setSyncing] = useState(false)
+  useErrorToast(syncError, {
+    id: `repository-inbox-sync:${repo}`,
+    title: "Could not update repository inbox state",
+  })
+  const complete = resource.state.data?.hasMore === false
+  useEffect(() => {
+    setSyncing(false)
+    if (
+      !active ||
+      !repo ||
+      !resource.state.loaded ||
+      resource.state.refreshing ||
+      resource.state.error
+    )
+      return
+    let current = true
+    setSyncError(null)
+    setSyncing(true)
+    void client
+      .syncRepositoryInbox(viewer.login, repo, items, { complete })
+      .catch((error: unknown) => {
+        if (current) setSyncError(error)
+      })
+      .finally(() => {
+        if (current) setSyncing(false)
+      })
+    return () => {
+      current = false
+    }
+  }, [
+    active,
+    client,
+    complete,
+    items,
+    repo,
+    resource.state.loaded,
+    resource.state.refreshing,
+    resource.state.error,
+    viewer.login,
+  ])
   return {
     items,
     state: resource.state,
     loading: !resource.state.loaded && !resource.state.error,
-    refreshing: resource.state.refreshing,
+    refreshing: resource.state.refreshing || syncing,
     error: resource.state.error,
     pages: resource.state.data?.pages ?? 0,
     more: resource.state.data?.hasMore ?? false,

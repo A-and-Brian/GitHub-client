@@ -8,7 +8,7 @@ import {
   PopoverTrigger,
 } from "@github-client/ui/components/popover"
 import { cn } from "@github-client/ui/lib/utils"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClockIcon, Undo2Icon } from "lucide-react"
+import { CheckIcon, ClockIcon, Undo2Icon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -23,7 +23,7 @@ export function InboxDropHeader({
   count,
   disabled,
 }: {
-  section: "pinned" | "active"
+  section: "pinned" | "active" | "snoozed" | "settled"
   title: string
   count: number
   disabled: boolean
@@ -43,69 +43,6 @@ export function InboxDropHeader({
   )
 }
 
-export function InboxShelf({
-  title,
-  count,
-  expanded,
-  showSelectedCollapsed = false,
-  onToggle,
-  dropDisabled = true,
-  children,
-}: {
-  title: string
-  count: number
-  expanded: boolean
-  showSelectedCollapsed?: boolean
-  onToggle: () => void
-  dropDisabled?: boolean
-  children: React.ReactNode
-}) {
-  const drop = useDroppable({
-    id: "inbox-drop:settled:header",
-    disabled: dropDisabled || title !== "Settled",
-  })
-  return (
-    <section className="border-b last:border-b-0">
-      <button
-        ref={title === "Settled" ? drop.setNodeRef : undefined}
-        type="button"
-        data-inbox-control
-        data-inbox-shelf={title.toLowerCase()}
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className={cn(
-          "flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-sidebar-accent",
-          drop.isOver && "bg-accent/60",
-        )}
-      >
-        {expanded ? (
-          <ChevronDownIcon className="size-4" />
-        ) : (
-          <ChevronRightIcon className="size-4" />
-        )}
-        {title}
-        <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
-      </button>
-      {expanded && children}
-      {!expanded && showSelectedCollapsed && children}
-    </section>
-  )
-}
-
-export function shelfStorageKey(login: string) {
-  return `github-client.inbox-shelves.${login.trim().toLowerCase()}.v1`
-}
-export function readShelfState(login: string) {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(shelfStorageKey(login)) ?? "null") as Partial<{
-      snoozed: boolean
-      settled: boolean
-    }> | null
-    return { snoozed: parsed?.snoozed ?? false, settled: parsed?.settled ?? false }
-  } catch {
-    return { snoozed: false, settled: false }
-  }
-}
 export class InboxPointerSensor extends PointerSensor {
   static activators = [
     {
@@ -177,6 +114,7 @@ export class InboxPointerSensor extends PointerSensor {
 
 export function InboxActions({
   state,
+  terminalState,
   snoozedUntil,
   busy,
   onSnooze,
@@ -184,6 +122,7 @@ export function InboxActions({
   onRestore,
 }: {
   state: "active" | "snoozed" | "settled"
+  terminalState?: "CLOSED" | "MERGED"
   snoozedUntil?: string | null
   busy: boolean
   onSnooze: (until: number, close: () => void) => void
@@ -192,6 +131,13 @@ export function InboxActions({
 }) {
   const [open, setOpen] = useState(false)
   const [custom, setCustom] = useState("")
+  if (terminalState) {
+    return (
+      <div className="px-3 py-2 text-xs text-muted-foreground">
+        {terminalState === "MERGED" ? "Merged on GitHub" : "Closed on GitHub"}
+      </div>
+    )
+  }
   const snooze = (until: number) => {
     if (!Number.isFinite(until) || until <= Date.now()) {
       toast.error("Choose a future return time.")

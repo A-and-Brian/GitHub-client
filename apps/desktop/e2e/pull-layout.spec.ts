@@ -10,6 +10,12 @@ async function signIn(page: Page) {
 }
 
 async function sizePane(page: Page, desiredWidth: number) {
+  await expect(
+    page.getByRole("complementary", { name: "Pull request inbox", exact: true }),
+  ).toHaveAttribute("data-inbox-ready", "true")
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }).locator(".animate-spin"),
+  ).toHaveCount(0)
   const pane = page.locator(".pull-content-body")
   await expect(pane).toBeVisible()
   const box = await pane.boundingBox()

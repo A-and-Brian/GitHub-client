@@ -21,9 +21,7 @@ test("persistent outer navigation and inner inbox preserve archived selection, f
   await page.getByLabel("Filter inbox").fill("diff")
   await openPull(page)
   await page.getByRole("button", { name: "Settle locally", exact: true }).click()
-  await page.getByRole("button", { name: /^Settled/ }).click()
   await openPull(page)
-  await page.getByRole("button", { name: /^Settled/ }).click()
   await expect(page.getByRole("heading", { name: "Speed up the diff view" })).toBeVisible()
   await page.getByRole("button", { name: "Failures", exact: true }).click()
   await expect(inbox(page).getByText("Speed up the diff view", { exact: true })).toHaveCount(1)
@@ -33,10 +31,12 @@ test("persistent outer navigation and inner inbox preserve archived selection, f
       .getByText("Settled locally · GitHub PR unchanged"),
   ).toBeVisible()
   await page.getByRole("button", { name: "Failures", exact: true }).click()
-  await expect(page.getByRole("button", { name: /^Settled/ })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  )
+  await expect(page.getByRole("heading", { name: /^Settled/ })).toHaveCount(0)
+  await expect(
+    page
+      .getByRole("list", { name: "Settled pull requests" })
+      .getByText("Speed up the diff view", { exact: true }),
+  ).toBeVisible()
   await expect(page.getByLabel("Filter inbox")).toHaveValue("diff")
   expect(requests.filter((r) => r.method !== "GET" && r.path !== "/graphql")).toEqual([])
 })
@@ -190,7 +190,7 @@ test("larger text keeps long PR rows and sidebar controls usable", async ({ page
   await page.screenshot({ path: info.outputPath("large-text.png") })
 })
 
-test("short window keeps Active and footer usable with both archives expanded", async ({
+test("short window keeps Active and footer usable with both archives populated", async ({
   page,
 }, info) => {
   await page.setViewportSize({ width: 1280, height: 540 })
@@ -201,8 +201,6 @@ test("short window keeps Active and footer usable with both archives expanded", 
   await inbox(page).getByText("Follow-up pull request 1", { exact: true }).click()
   await page.getByRole("button", { name: "Snooze", exact: true }).click()
   await page.getByRole("button", { name: "In one hour", exact: true }).click()
-  await page.getByRole("button", { name: /^Snoozed/ }).click()
-  await page.getByRole("button", { name: /^Settled/ }).click()
   const active = page.getByRole("list", { name: "Active pull requests" })
   const footer = page.locator("footer")
   const activeBox = await active.boundingBox()
