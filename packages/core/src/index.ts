@@ -33,4 +33,5 @@ export type {
   RepositoryResourceSnapshot,
 } from "./repository-cache"
 export { RepositoryCache, repositoryResourceKey } from "./repository-cache"
+export type { PendingWorkflowApproval } from "./sync/actions"
 export type { JobStatus } from "./sync/poller"
