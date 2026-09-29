@@ -16,6 +16,7 @@ import { Kbd } from "@github-client/ui/components/kbd"
 import { cn } from "@github-client/ui/lib/utils"
 import { useLiveQuery } from "@tanstack/react-db"
 import { Link, Outlet, useRouterState } from "@tanstack/react-router"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import {
   BuildingIcon,
   ChevronDownIcon,
@@ -37,7 +38,7 @@ import { SIGNED_OUT_KEY, VIEWER_KEY } from "@/app/storage-keys"
 import { appVersion, checkForUpdates, installUpdate, useUpdateState } from "@/app/updates"
 import { UserAvatar } from "@/components/avatar"
 import { useTheme } from "@/components/theme-provider"
-import { WindowChrome } from "@/components/window-chrome"
+import { isMacDesktop, WindowChrome } from "@/components/window-chrome"
 import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
@@ -73,7 +74,7 @@ export function Layout() {
         mobileMenuOpen={mobileMenuOpen}
         onOpenPalette={() => setPaletteOpen(true)}
       />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden" onMouseDown={startWindowDrag}>
         <div className="border-b px-3 py-2 md:hidden">
           <Button variant="ghost" size="sm" onClick={() => setMobileMenuOpen(true)}>
             <MenuIcon />
@@ -85,6 +86,27 @@ export function Layout() {
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   )
+}
+
+function startWindowDrag(event: React.MouseEvent<HTMLElement>) {
+  if (!isMacDesktop || event.button !== 0 || event.defaultPrevented || event.clientY > 40) {
+    return
+  }
+
+  const target = event.target
+  if (!(target instanceof Element) || !event.currentTarget.contains(target)) return
+  if (
+    target.closest(
+      "button, a, input, textarea, select, summary, label, [role='button'], [role='tab'], [role='menuitem'], [role='checkbox'], [role='radio'], [role='switch'], [role='combobox'], [role='option'], [contenteditable]:not([contenteditable='false'])",
+    )
+  ) {
+    return
+  }
+
+  event.preventDefault()
+  void getCurrentWindow()
+    .startDragging()
+    .catch((error) => showError("Could not drag window", error))
 }
 
 function GlobalGroupRail({
