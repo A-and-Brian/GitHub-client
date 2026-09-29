@@ -1,28 +1,34 @@
-import { useState } from "react"
+import { eq } from "@tanstack/db"
+import { useLiveQuery } from "@tanstack/react-db"
+import { useMemo } from "react"
+import { useSession } from "@/app/client"
+import { showError } from "@/app/errors"
 
-const storageKey = (prKey: string) => `github-client.viewed:${prKey}`
-
-/** Only the latest head is kept: files viewed on an older head count as unviewed. */
-function read(prKey: string, headOid: string): Set<string> {
-  try {
-    const saved = JSON.parse(localStorage.getItem(storageKey(prKey)) ?? "null")
-    return new Set(saved?.headOid === headOid ? saved.paths : [])
-  } catch {
-    return new Set()
-  }
-}
-
-/** Paths marked "Viewed" for one pull request at one head commit, kept in localStorage. */
+/** Viewed markers belong to the signed-in account and the exact reviewed head. */
 export function useViewedFiles(prKey: string, headOid: string) {
-  const id = `${prKey}@${headOid}`
-  const [state, setState] = useState(() => ({ id, paths: read(prKey, headOid) }))
-  if (state.id !== id) setState({ id, paths: read(prKey, headOid) })
-
+  const { client } = useSession()
+  const rows = useLiveQuery(
+    (q) =>
+      q
+        .from({ row: client.collections.viewedFiles.collection })
+        .where(({ row }) => eq(row.prKey, prKey))
+        .where(({ row }) => eq(row.headOid, headOid)),
+    [client, prKey, headOid],
+  ).data
+  const viewed = useMemo(() => new Set(rows.map((row) => row.path)), [rows])
   const toggle = (path: string) => {
-    const paths = new Set(state.paths)
-    if (!paths.delete(path)) paths.add(path)
-    localStorage.setItem(storageKey(prKey), JSON.stringify({ headOid, paths: [...paths] }))
-    setState({ id, paths })
+    const row = rows.find((row) => row.path === path)
+    const operation = row
+      ? client.collections.viewedFiles.collection.delete(row.key)
+      : client.collections.viewedFiles.collection.insert({
+          key: JSON.stringify([prKey, headOid, path]),
+          prKey,
+          headOid,
+          path,
+        })
+    void operation.isPersisted.promise.catch((error) =>
+      showError("Could not save viewed file", error),
+    )
   }
-  return { viewed: state.paths, toggle }
+  return { viewed, toggle }
 }

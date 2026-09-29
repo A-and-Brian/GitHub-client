@@ -295,10 +295,10 @@ test("merge reports local save failures and exposes its confirmed state in memor
     const connection = new Database(db.file)
     const { table_name: table } = connection
       .prepare("SELECT table_name FROM collection_registry WHERE collection_id = ?")
-      .get("inbox-preferences") as { table_name: string }
+      .get("normalized:inboxPreferences") as { table_name: string }
     const { table_name: pullTable } = connection
       .prepare("SELECT table_name FROM collection_registry WHERE collection_id = ?")
-      .get("pulls") as { table_name: string }
+      .get("normalized:pullRequests") as { table_name: string }
     connection.exec(
       `CREATE TRIGGER fail_inbox_update BEFORE INSERT ON "${table}" BEGIN SELECT RAISE(ABORT, 'inbox save failed'); END;`,
     )
@@ -533,7 +533,7 @@ test("failed durable inbox writes roll back the visible preference and can retry
     const triggerDb = new Database(db.file)
     const table = triggerDb
       .prepare("SELECT table_name FROM collection_registry WHERE collection_id = ?")
-      .get("inbox-preferences") as { table_name: string }
+      .get("normalized:inboxPreferences") as { table_name: string }
     triggerDb.exec(
       `CREATE TRIGGER fail_inbox_update BEFORE INSERT ON "${table.table_name}" BEGIN SELECT RAISE(ABORT, 'injected persistence failure'); END;`,
     )
@@ -555,8 +555,8 @@ test("failed durable inbox writes roll back the visible preference and can retry
       state: "active",
       activeOrder: 0,
     })
-    expect(observedStates).toContain("settled")
-    expect(observedStates.at(-1)).toBe("active")
+    // Canonical projections publish only after the durable write succeeds.
+    expect(observedStates).not.toContain("settled")
 
     const reloaded = new GitHubClient(platform(null, null, db.open()))
     await reloaded.collections.inboxPreferences.collection.preload()

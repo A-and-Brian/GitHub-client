@@ -70,7 +70,7 @@ interface RestRun {
   conclusion: string | null
   head_branch: string | null
   head_sha: string
-  actor: { login: string } | null
+  actor: { login: string; node_id?: string; avatar_url?: string } | null
   created_at: string
   updated_at: string
   html_url: string
@@ -109,6 +109,8 @@ export const toWorkflowRun = (repo: string, r: RestRun): WorkflowRun => ({
   headBranch: r.head_branch,
   headSha: r.head_sha,
   actor: r.actor?.login ?? null,
+  ...(r.actor?.node_id ? { actorId: r.actor.node_id } : {}),
+  ...(r.actor?.avatar_url ? { actorAvatarUrl: r.actor.avatar_url } : {}),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   url: r.html_url,

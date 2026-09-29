@@ -13,11 +13,13 @@ import { prKey } from "../domain/types"
 import type { GraphQLClient } from "../github/graphql"
 import type { RestClient } from "../github/rest"
 
-const ACTOR = "author { login avatarUrl }"
+const ACTOR = "author { id login avatarUrl }"
 
 const PULL_DETAIL = /* GraphQL */ `
   query PullDetail($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
+      id
+      owner { id login __typename }
       mergeCommitAllowed
       squashMergeAllowed
       rebaseMergeAllowed
@@ -32,13 +34,14 @@ const PULL_DETAIL = /* GraphQL */ `
           MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT,
           REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT
         ]) {
+          pageInfo { hasNextPage hasPreviousPage }
           nodes {
             __typename
             ... on IssueComment { id databaseId bodyHTML createdAt ${ACTOR} }
             ... on PullRequestReview { id state bodyHTML createdAt ${ACTOR} }
             ... on PullRequestCommit {
               id
-              commit { oid messageHeadline committedDate author { user { login } name } }
+              commit { oid messageHeadline committedDate author { user { id login avatarUrl } name } }
             }
             ... on LabeledEvent { id createdAt actor { login } label { name } }
             ... on UnlabeledEvent { id createdAt actor { login } label { name } }
@@ -55,9 +58,10 @@ const PULL_DETAIL = /* GraphQL */ `
           }
         }
         reviewThreads(first: 100) {
+          pageInfo { hasNextPage }
           nodes {
             id path line startLine diffSide isResolved isOutdated viewerCanResolve
-            comments(first: 50) { nodes { id databaseId body bodyHTML createdAt ${ACTOR} } }
+            comments(first: 50) { pageInfo { hasNextPage } nodes { id databaseId body bodyHTML createdAt ${ACTOR} } }
           }
         }
         commits(last: 1) {
@@ -65,13 +69,14 @@ const PULL_DETAIL = /* GraphQL */ `
             commit {
               statusCheckRollup {
                 contexts(first: 100) {
+                  pageInfo { hasNextPage }
                   nodes {
                     __typename
                     ... on CheckRun {
-                      name status conclusion detailsUrl
-                      checkSuite { workflowRun { databaseId workflow { name } } }
+                      id name status conclusion detailsUrl
+                      checkSuite { workflowRun { databaseId workflow { databaseId name } } }
                     }
-                    ... on StatusContext { context state targetUrl }
+                    ... on StatusContext { id context state targetUrl }
                   }
                 }
               }
@@ -88,7 +93,7 @@ const PULL_DETAIL = /* GraphQL */ `
 type Node = Record<string, any>
 
 const actor = (node: Node | null | undefined): Actor | null =>
-  node ? { login: node.login, avatarUrl: node.avatarUrl } : null
+  node ? { id: node.id, login: node.login, avatarUrl: node.avatarUrl } : null
 
 const EVENT_TEXT: Record<string, (n: Node) => string> = {
   LabeledEvent: (n) => `added label ${n.label?.name}`,
@@ -130,6 +135,7 @@ export function toTimelineItem(n: Node): TimelineItem | null {
         oid: n.commit.oid,
         messageHeadline: n.commit.messageHeadline,
         author: n.commit.author?.user?.login ?? n.commit.author?.name ?? null,
+        authorIdentity: actor(n.commit.author?.user),
         createdAt: n.commit.committedDate,
       }
     default: {
@@ -149,6 +155,7 @@ export function toTimelineItem(n: Node): TimelineItem | null {
 export function toCheck(n: Node): Check {
   if (n.__typename === "StatusContext") {
     return {
+      id: n.id,
       kind: "status",
       name: n.context,
       status: n.state,
@@ -160,12 +167,14 @@ export function toCheck(n: Node): Check {
   }
   const run = n.checkSuite?.workflowRun
   return {
+    id: n.id,
     kind: "check-run",
     name: n.name,
     status: n.status,
     conclusion: n.conclusion,
     url: n.detailsUrl,
     workflowRunId: run?.databaseId ?? null,
+    workflowId: run?.workflow?.databaseId ?? null,
     workflowName: run?.workflow?.name ?? null,
   }
 }
@@ -198,6 +207,7 @@ export function toPullRequestDetail(repo: string, repository: Node): PullRequest
   if (repository.mergeCommitAllowed) mergeMethods.push("merge")
   if (repository.rebaseMergeAllowed) mergeMethods.push("rebase")
   const rollup = pr.commits.nodes[0]?.commit.statusCheckRollup
+  const observedAt = new Date().toISOString()
   return {
     key: prKey(repo, pr.number),
     id: pr.id,
@@ -227,6 +237,16 @@ export function toPullRequestDetail(repo: string, repository: Node): PullRequest
       .filter((item: TimelineItem | null): item is TimelineItem => item !== null),
     threads: pr.reviewThreads.nodes.map(toThread),
     checks: (rollup?.contexts.nodes ?? []).map(toCheck),
+    timelineComplete: !pr.timelineItems.pageInfo?.hasPreviousPage,
+    threadsComplete:
+      !pr.reviewThreads.pageInfo?.hasNextPage &&
+      pr.reviewThreads.nodes.every((thread: Node) => !thread.comments.pageInfo?.hasNextPage),
+    checksComplete: !rollup?.contexts.pageInfo?.hasNextPage,
+    observedAt,
+    repositoryNodeId: repository.id,
+    ownerNodeId: repository.owner?.id,
+    ownerKind: repository.owner?.__typename === "Organization" ? "organization" : "user",
+    ownerLogin: repository.owner?.login,
   }
 }
 
@@ -235,9 +255,10 @@ export async function fetchPullDetail(
   repo: string,
   number: number,
 ): Promise<PullRequestDetail> {
+  const observedAt = new Date().toISOString()
   const [owner, name] = repo.split("/")
   const data = await graphql.query<{ repository: Node }>(PULL_DETAIL, { owner, name, number })
-  return toPullRequestDetail(repo, data.repository)
+  return { ...toPullRequestDetail(repo, data.repository), observedAt }
 }
 
 export async function syncPullDetail(

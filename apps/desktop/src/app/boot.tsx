@@ -19,7 +19,6 @@ let clientPromise: Promise<GitHubClient> | undefined
 const getClient = () => {
   clientPromise ??= createPlatform().then(async (platform) => {
     const client = new GitHubClient(platform)
-    await client.prepareSync()
     return client
   })
   return clientPromise
@@ -47,7 +46,8 @@ export function Boot() {
     ;(async () => {
       const client = await getClient()
       const allowEnv = localStorage.getItem(SIGNED_OUT_KEY) === null
-      if (!(await client.auth.restore({ allowEnv }))) return { phase: "setup", client } as State
+      const restored = await client.auth.restore({ allowEnv })
+      if (!restored) return { phase: "setup", client } as State
       const cachedViewer = localStorage.getItem(VIEWER_KEY)
       try {
         const viewer = await client.rest.get<{
@@ -91,7 +91,11 @@ export function Boot() {
           client={state.client}
           error={state.error}
           className={isMacDesktop ? "h-full" : undefined}
-          onSignedIn={(viewer) => setState(ready(state.client, viewer))}
+          onSignedIn={(viewer) => {
+            void ready(state.client, viewer)
+              .then(setState)
+              .catch((error) => setState({ phase: "failed", error: String(error) }))
+          }}
         />
       )}
       {state.phase === "ready" && <App client={state.client} viewer={state.viewer} />}
@@ -113,7 +117,8 @@ export function Boot() {
   )
 }
 
-function ready(client: GitHubClient, viewer: Viewer): State {
+async function ready(client: GitHubClient, viewer: Viewer): Promise<State> {
+  await client.activateAccount(viewer.login)
   localStorage.removeItem(SIGNED_OUT_KEY)
   localStorage.setItem(VIEWER_KEY, JSON.stringify(viewer))
   client.startSync()

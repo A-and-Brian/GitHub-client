@@ -3,9 +3,11 @@ import type { Group, Repo } from "../domain/types"
 import type { RestClient } from "../github/rest"
 
 interface RestRepo {
+  id?: number
+  node_id?: string
   full_name: string
   name: string
-  owner: { login: string }
+  owner: { id?: number; node_id?: string; login: string; type?: "User" | "Organization" }
   private: boolean
   archived: boolean
   default_branch: string
@@ -13,13 +15,19 @@ interface RestRepo {
 }
 
 interface RestTeam {
+  id?: number
+  node_id?: string
   name: string
   slug: string
-  organization: { login: string }
-  parent?: { name: string; slug: string } | null
+  organization: { id?: number; node_id?: string; login: string }
+  parent?: { id?: number; node_id?: string; name: string; slug: string } | null
 }
 
 export const toRepo = (r: RestRepo): Repo => ({
+  nodeId: r.node_id,
+  databaseId: r.id,
+  ownerNodeId: r.owner.node_id,
+  ownerKind: r.owner.type === "Organization" ? "organization" : "user",
   fullName: r.full_name,
   owner: r.owner.login,
   name: r.name,
@@ -39,16 +47,20 @@ export async function syncGroups(
   repos: SyncedCollection<Repo, string>,
 ): Promise<void> {
   const [orgResult, teamResult] = await Promise.all([
-    rest.pollAll<{ login: string }>("/user/orgs", {}, { maxPages: 100 }),
+    rest.pollAll<{ id?: number; node_id?: string; login: string }>(
+      "/user/orgs",
+      {},
+      { maxPages: 100 },
+    ),
     rest.pollAll<RestTeam>("/user/teams", {}, { maxPages: 100 }),
   ])
-  const orgs =
+  const orgs: Array<{ id?: number; node_id?: string; login: string }> =
     orgResult.status === "ok"
       ? orgResult.data
       : [...groups.collection.values()]
           .filter((group) => group.kind === "org")
-          .map((group) => ({ login: group.org ?? group.name }))
-  const teams =
+          .map((group) => ({ login: group.org ?? group.name, node_id: group.orgNodeId }))
+  const teams: RestTeam[] =
     teamResult.status === "ok"
       ? teamResult.data
       : [...groups.collection.values()]
@@ -57,6 +69,7 @@ export async function syncGroups(
             name: group.name.slice((group.org?.length ?? 0) + 1),
             slug: group.id.slice(group.id.lastIndexOf("/") + 1),
             organization: { login: group.org ?? "" },
+            node_id: group.teamNodeId,
             parent:
               group.parentSlug && group.parentName
                 ? { slug: group.parentSlug, name: group.parentName }
@@ -71,11 +84,17 @@ export async function syncGroups(
   )
 
   const next: Group[] = [{ id: "me", kind: "me", name: "Involving me", order: 0 }]
-  orgs
-    .map((org) => org.login)
-    .sort((a, b) => a.localeCompare(b))
+  ;[...orgs]
+    .sort((a, b) => a.login.localeCompare(b.login))
     .forEach((org, i) => {
-      next.push({ id: `org:${org}`, kind: "org", name: org, org, order: 100 + i })
+      next.push({
+        id: `org:${org.login}`,
+        kind: "org",
+        name: org.login,
+        org: org.login,
+        orgNodeId: org.node_id,
+        order: 100 + i,
+      })
     })
 
   const knownRepos: Repo[] = []
@@ -90,6 +109,9 @@ export async function syncGroups(
       kind: "team",
       name: `${team.organization.login}/${team.name}`,
       org: team.organization.login,
+      orgNodeId: team.organization.node_id,
+      teamNodeId: team.node_id,
+      parentTeamNodeId: team.parent?.node_id ?? null,
       parentSlug: team.parent?.slug ?? null,
       parentName: team.parent?.name ?? null,
       order: 1000 + i,

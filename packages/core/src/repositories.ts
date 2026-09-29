@@ -1,10 +1,15 @@
 import type { RestClient } from "./github/rest"
 
 export interface RepositorySummary {
+  /** GitHub GraphQL node ID; null only for REST fixtures/responses that omit it. */
+  nodeId: string | null
   id: number
   fullName: string
   name: string
   owner: string
+  ownerNodeId?: string
+  ownerDatabaseId?: number
+  ownerKind?: "user" | "organization"
   description: string | null
   private: boolean
   archived: boolean
@@ -25,6 +30,7 @@ export interface Page<T> {
 export interface ContentEntry {
   name: string
   path: string
+  sha?: string
   type: "file" | "dir" | "symlink" | "submodule"
   size: number
   htmlUrl: string | null
@@ -35,6 +41,7 @@ export type RepositoryContents =
   | { kind: "file"; entry: ContentEntry; text: string | null; reason?: string }
 
 export interface RepositoryReleaseAsset {
+  id: number
   name: string
   size: number
   downloadUrl: string
@@ -54,9 +61,10 @@ export interface RepositoryRelease {
 
 interface GitHubRepository {
   id: number
+  node_id?: string
   full_name: string
   name: string
-  owner: { login: string }
+  owner: { login: string; id?: number; node_id?: string; type?: string }
   description: string | null
   private: boolean
   archived: boolean
@@ -68,6 +76,7 @@ interface GitHubRepository {
 interface GitHubContent {
   name: string
   path: string
+  sha?: string
   type?: string
   size?: number
   html_url?: string
@@ -86,7 +95,7 @@ interface GitHubRelease {
   prerelease: boolean
   published_at: string | null
   html_url: string
-  assets: Array<{ name: string; size: number; browser_download_url: string }>
+  assets: Array<{ id: number; name: string; size: number; browser_download_url: string }>
 }
 
 const PAGE_SIZE = 100
@@ -151,6 +160,7 @@ export async function listReleases(
       publishedAt: release.published_at,
       htmlUrl: release.html_url,
       assets: release.assets.map((asset) => ({
+        id: asset.id,
         name: asset.name,
         size: asset.size,
         downloadUrl: asset.browser_download_url,
@@ -203,7 +213,7 @@ export async function getReadme(
   owner: string,
   repo: string,
   ref: string,
-): Promise<{ html: string; path: string } | null> {
+): Promise<{ html: string; path: string; sha?: string; size?: number; htmlUrl?: string } | null> {
   const path = `${repositoryPath(owner, repo)}/readme`
   let metadata: GitHubContent
   try {
@@ -219,7 +229,13 @@ export async function getReadme(
   const html = await rest.getText(`${path}?ref=${encodeURIComponent(ref)}`, {
     Accept: "application/vnd.github.html+json",
   })
-  return { html, path: metadata.path }
+  return {
+    html,
+    path: metadata.path,
+    ...(metadata.sha ? { sha: metadata.sha } : {}),
+    ...(metadata.size === undefined ? {} : { size: metadata.size }),
+    ...(metadata.html_url ? { htmlUrl: metadata.html_url } : {}),
+  }
 }
 
 function repositoryPath(owner: string, repo: string): string {
@@ -232,10 +248,14 @@ function segment(value: string): string {
 
 function mapRepository(repository: GitHubRepository): RepositorySummary {
   return {
+    nodeId: repository.node_id ?? null,
     id: repository.id,
     fullName: repository.full_name,
     name: repository.name,
     owner: repository.owner.login,
+    ...(repository.owner.node_id ? { ownerNodeId: repository.owner.node_id } : {}),
+    ...(repository.owner.id === undefined ? {} : { ownerDatabaseId: repository.owner.id }),
+    ownerKind: repository.owner.type === "User" ? "user" : "organization",
     description: repository.description,
     private: repository.private,
     archived: repository.archived,
@@ -256,6 +276,7 @@ function mapContentEntry(content: GitHubContent): ContentEntry {
   return {
     name: content.name,
     path: content.path,
+    ...(content.sha ? { sha: content.sha } : {}),
     type,
     size: content.size ?? 0,
     htmlUrl: content.html_url ?? null,
