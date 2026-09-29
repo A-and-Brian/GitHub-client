@@ -278,7 +278,7 @@ test("repository Releases show loading until the successful empty response arriv
   await page.goto("/#/repo/acme/api?tab=releases")
   await requestStarted
   try {
-    await expect(page.getByText("Loading…", { exact: true })).toBeVisible()
+    await expect(page.getByRole("status").filter({ hasText: /^Loading…$/ })).toBeVisible()
     await expect(page.getByText("No releases yet.", { exact: true })).toHaveCount(0)
   } finally {
     finishResponse()
