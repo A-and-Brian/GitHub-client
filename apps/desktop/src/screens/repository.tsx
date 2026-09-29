@@ -7,8 +7,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@github-client/ui/components/dropdown-menu"
-import { Link, useNavigate, useSearch } from "@tanstack/react-router"
+import { useLiveQuery } from "@tanstack/react-db"
+import { Link, useCanGoBack, useNavigate, useRouter, useSearch } from "@tanstack/react-router"
 import {
+  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
@@ -45,7 +47,10 @@ export function RepositoryBrowser({
 }) {
   const { client, viewer } = useSession()
   const navigate = useNavigate()
+  const router = useRouter()
+  const canGoBack = useCanGoBack()
   const routeSearch = useSearch({ strict: false })
+  const groups = useLiveQuery((q) => q.from({ group: client.collections.groups.collection })).data
   const [pullsVisited, setPullsVisited] = useState(tab === "pulls")
   const [actionsVisited, setActionsVisited] = useState(tab === "actions")
   const [releasesVisited, setReleasesVisited] = useState(tab === "releases")
@@ -55,6 +60,9 @@ export function RepositoryBrowser({
     if (tab === "releases") setReleasesVisited(true)
   }, [tab])
   const repoName = `${owner}/${repo}`
+  const organization = groups.find(
+    (group) => group.kind === "org" && group.org?.toLowerCase() === owner.toLowerCase(),
+  )
   const identity = { host: client.rest.url("/"), accountLogin: viewer.login, owner, repo }
   const summaryResource = useRepositoryResource({ ...identity, kind: "summary" })
   const summary = summaryResource.state.data
@@ -121,6 +129,21 @@ export function RepositoryBrowser({
       },
     })
   }
+  const goBack = () => {
+    if (canGoBack) {
+      router.history.back()
+      return
+    }
+    if (organization) {
+      void navigate({
+        to: "/org/$org",
+        params: { org: organization.org ?? organization.name },
+        search: { tab: "repositories" },
+      })
+      return
+    }
+    void navigate({ to: "/" })
+  }
   const crumbs = useMemo(() => path.split("/").filter(Boolean), [path])
   const openEntry = (entry: ContentEntry) => {
     if (entry.type === "dir") updateLocation({ path: entry.path })
@@ -133,38 +156,89 @@ export function RepositoryBrowser({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b px-6 py-5">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Link to="/" className="hover:text-foreground">
-                Organizations
+      <header className="shrink-0 border-b">
+        <div className="flex min-w-0 items-center gap-3 px-4 py-2.5">
+          <Button type="button" variant="ghost" size="icon" aria-label="Back" onClick={goBack}>
+            <ArrowLeftIcon />
+          </Button>
+          <nav
+            aria-label="Repository breadcrumbs"
+            className="flex min-w-0 flex-1 items-center gap-2"
+          >
+            <Link to="/" className="shrink-0 text-sm text-muted-foreground hover:text-foreground">
+              Home
+            </Link>
+            <span aria-hidden="true" className="text-muted-foreground">
+              /
+            </span>
+            {organization ? (
+              <Link
+                to="/org/$org"
+                params={{ org: organization.org ?? organization.name }}
+                search={{ tab: "repositories" }}
+                className="max-w-40 truncate text-sm text-muted-foreground hover:text-foreground"
+              >
+                {owner}
               </Link>
-              <span>/</span>
-              <span className="truncate">{repoName}</span>
-            </div>
-            <h1 className="mt-2 truncate text-2xl font-semibold">{repoName}</h1>
-            {summary?.description && (
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{summary.description}</p>
-            )}
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>{summary?.private ? "Private" : "Public"}</span>
-              {summary?.archived && <span>· Archived</span>}
+            ) : (
               <a
-                href={summary?.htmlUrl}
+                href={`https://github.com/${owner}`}
                 onClick={(event) => {
                   event.preventDefault()
-                  if (summary?.htmlUrl) void openExternal(summary.htmlUrl)
+                  void openExternal(`https://github.com/${owner}`)
                 }}
-                className="inline-flex items-center gap-1 hover:text-foreground"
+                className="max-w-40 truncate text-sm text-muted-foreground hover:text-foreground"
               >
-                Open on GitHub <ExternalLinkIcon className="size-3" />
+                {owner}
               </a>
-            </div>
+            )}
+            <span aria-hidden="true" className="text-muted-foreground">
+              /
+            </span>
+            <h1 aria-label={repoName} className="min-w-0 truncate text-base font-semibold">
+              <Link
+                to="/repo/$owner/$repo"
+                params={{ owner, repo }}
+                search={{
+                  ...routeSearch,
+                  tab: "code",
+                  path: undefined,
+                  pull: undefined,
+                  pullTab: undefined,
+                  run: undefined,
+                  job: undefined,
+                  ref: refName,
+                }}
+                className="hover:underline"
+              >
+                {repo}
+              </Link>
+            </h1>
+          </nav>
+          <div className="hidden min-w-0 max-w-[40%] items-center gap-2 text-xs text-muted-foreground lg:flex">
+            <span className="shrink-0">{summary?.private ? "Private" : "Public"}</span>
+            {summary?.archived && <span className="shrink-0">· Archived</span>}
+            {summary?.description && (
+              <span className="truncate" title={summary.description}>
+                {summary.description}
+              </span>
+            )}
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Open repository on GitHub"
+            disabled={!summary?.htmlUrl}
+            onClick={() => summary?.htmlUrl && void openExternal(summary.htmlUrl)}
+          >
+            <ExternalLinkIcon />
+          </Button>
+        </div>
+        <div className="flex min-w-0 items-center gap-3 border-t px-4 py-2">
           <nav
             aria-label="Repository navigation"
-            className="flex max-w-full flex-wrap items-center gap-1 rounded-lg border p-1 text-sm"
+            className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             {(
               [
@@ -180,13 +254,15 @@ export function RepositoryBrowser({
                 type="button"
                 aria-current={tab === value ? "page" : undefined}
                 onClick={() => updateLocation({ tab: value })}
-                className={`rounded-md px-3 py-1.5 ${tab === value ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 ${tab === value ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {label}
               </button>
             ))}
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
+              <DropdownMenuTrigger
+                render={<Button variant="ghost" size="sm" className="shrink-0" />}
+              >
                 More on GitHub ↗
               </DropdownMenuTrigger>
               <DropdownMenuContent>
@@ -213,39 +289,39 @@ export function RepositoryBrowser({
               </DropdownMenuContent>
             </DropdownMenu>
           </nav>
+          <div className="flex min-w-0 max-w-[40%] shrink items-center gap-2">
+            <RepositoryCacheStatus states={activeResources.map((resource) => resource.state)} />
+            {activeResources.some((resource) => resource.state.loaded && resource.state.error) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Retry"
+                onClick={() => {
+                  for (const resource of activeResources)
+                    if (resource.state.error) void resource.retry()
+                }}
+              >
+                <RefreshCwIcon /> Retry
+              </Button>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Refresh repository"
+              disabled={activeResources.some((resource) => resource.state.refreshing)}
+              onClick={refresh}
+            >
+              <RefreshCwIcon
+                className={
+                  activeResources.some((resource) => resource.state.refreshing)
+                    ? "animate-spin"
+                    : undefined
+                }
+              />
+            </Button>
+          </div>
         </div>
       </header>
-      <div className="flex items-center justify-between gap-3 border-b px-6 py-2">
-        <RepositoryCacheStatus states={activeResources.map((resource) => resource.state)} />
-        {activeResources.some((resource) => resource.state.loaded && resource.state.error) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              for (const resource of activeResources)
-                if (resource.state.error) void resource.retry()
-            }}
-          >
-            Retry
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-label="Refresh repository"
-          disabled={activeResources.some((resource) => resource.state.refreshing)}
-          onClick={refresh}
-        >
-          <RefreshCwIcon
-            className={
-              activeResources.some((resource) => resource.state.refreshing)
-                ? "animate-spin"
-                : undefined
-            }
-          />{" "}
-          Refresh
-        </Button>
-      </div>
       {(pullsVisited || tab === "pulls") && !summaryError && (
         <div hidden={tab !== "pulls"} className={tab === "pulls" ? "min-h-0 flex-1" : "hidden"}>
           <Inbox entityScope={{ repo: repoName }} active={tab === "pulls"} />
