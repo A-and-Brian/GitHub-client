@@ -221,7 +221,7 @@ test("returning to Inbox gives the new action its own Undo lifetime", async ({ p
   await menuAction(page, "Pin")
   await expect(page.locator("[data-sonner-toast]").filter({ hasText: /^Pinned/ })).toBeVisible()
   await page.clock.fastForward(2500)
-  await page.getByRole("link", { name: "Involving me", exact: true }).click()
+  await page.getByRole("link", { name: "Home", exact: true }).click()
   await page.getByRole("link", { name: "Inbox", exact: true }).click()
   await menuAction(page, "Unpin")
   const currentNotice = page.locator("[data-sonner-toast]").filter({ hasText: /^Unpinned/ })

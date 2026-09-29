@@ -1,5 +1,6 @@
 import { jobKeys } from "@github-client/core"
 import { buildGroupTree, type GroupTreeNode } from "@github-client/core/domain/group-tree"
+import { deriveInboxPulls } from "@github-client/core/inbox"
 import { Button } from "@github-client/ui/components/button"
 import {
   DropdownMenu,
@@ -43,6 +44,21 @@ import { isDesktop } from "@/platform"
 import { CommandPalette } from "@/screens/command-palette"
 
 const GROUP_ICONS = { me: UserIcon, org: BuildingIcon, team: UsersIcon, starred: StarIcon }
+const SIDEBAR_WIDTH_KEY = "github-client.main-sidebar-width.v1"
+const DEFAULT_SIDEBAR_WIDTH = 240
+const MIN_SIDEBAR_WIDTH = 200
+const MAX_SIDEBAR_WIDTH = 400
+
+function savedSidebarWidth() {
+  try {
+    const width = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+    return Number.isFinite(width) && width >= MIN_SIDEBAR_WIDTH && width <= MAX_SIDEBAR_WIDTH
+      ? width
+      : DEFAULT_SIDEBAR_WIDTH
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH
+  }
+}
 
 export function Layout() {
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -118,21 +134,41 @@ function GlobalGroupRail({
   mobileMenuOpen: boolean
   onOpenPalette: () => void
 }) {
-  const { client } = useSession()
+  const { client, viewer } = useSession()
+  const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth)
+  const sidebarDrag = useRef<{ x: number; width: number } | null>(null)
   const groups = useLiveQuery((q) =>
     q.from({ g: client.collections.groups.collection }).orderBy(({ g }) => g.order, "asc"),
   ).data
   const pulls = useLiveQuery((q) => q.from({ p: client.collections.pulls.collection })).data
-  const counts = new Map<string, number>()
-  for (const pull of pulls) counts.set(pull.groupId, (counts.get(pull.groupId) ?? 0) + 1)
+  const counts = useMemo(() => {
+    const next = new Map<string, number>()
+    for (const pull of pulls) next.set(pull.groupId, (next.get(pull.groupId) ?? 0) + 1)
+    return next
+  }, [pulls])
+  const inboxCount = useMemo(
+    () => deriveInboxPulls(pulls, groups, viewer.login, [], Date.now(), "involving").length,
+    [pulls, groups, viewer.login],
+  )
+  const setWidth = (requested: number) => {
+    const width = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, requested))
+    setSidebarWidth(width)
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width))
+    } catch {
+      // Resizing remains available when browser storage is disabled.
+    }
+  }
   const tree = useMemo(() => buildGroupTree(groups), [groups])
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   return (
     <aside
+      aria-label="Main navigation"
       className={cn(
-        "w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:relative md:flex",
+        "relative w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:relative md:inset-auto md:left-auto md:z-auto md:w-[var(--main-sidebar-width)] md:flex",
         mobileMenuOpen ? "fixed inset-y-0 left-0 z-50 flex" : "hidden md:flex",
       )}
+      style={{ "--main-sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <WindowChrome />
       <div className="flex items-center gap-2 p-3">
@@ -166,23 +202,71 @@ function GlobalGroupRail({
         >
           <InboxIcon className="size-4 shrink-0 text-muted-foreground" />
           <span>Inbox</span>
+          <span
+            className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground"
+            aria-hidden="true"
+          >
+            {inboxCount}
+          </span>
         </Link>
+        <hr className="my-2" />
         {groups.length === 0 && (
           <p className="px-2 py-1 text-xs text-muted-foreground">Loading groups…</p>
         )}
-        {tree.map((node) => (
-          <GroupNavNode
-            key={node.group.id}
-            node={node}
-            depth={0}
-            collapsed={collapsed}
-            setCollapsed={setCollapsed}
-            pathname={pathname}
-            counts={counts}
-          />
-        ))}
+        {tree
+          .filter((node) => node.group.kind !== "me")
+          .map((node) => (
+            <GroupNavNode
+              key={node.group.id}
+              node={node}
+              depth={0}
+              collapsed={collapsed}
+              setCollapsed={setCollapsed}
+              pathname={pathname}
+              counts={counts}
+            />
+          ))}
       </nav>
       <AccountSyncFooter />
+      <hr
+        tabIndex={0}
+        aria-label="Resize main sidebar"
+        aria-orientation="vertical"
+        aria-valuemin={MIN_SIDEBAR_WIDTH}
+        aria-valuemax={MAX_SIDEBAR_WIDTH}
+        aria-valuenow={sidebarWidth}
+        className="absolute inset-y-0 right-0 z-10 hidden h-full w-2 cursor-col-resize touch-none border-0 bg-transparent hover:bg-primary/20 focus-visible:bg-primary/40 focus-visible:outline-none md:block"
+        onPointerDown={(event) => {
+          if (event.button !== 0 || !event.isPrimary) return
+          sidebarDrag.current = { x: event.clientX, width: sidebarWidth }
+          event.currentTarget.setPointerCapture(event.pointerId)
+          event.preventDefault()
+        }}
+        onPointerMove={(event) => {
+          if (!sidebarDrag.current) return
+          if (!(event.buttons & 1)) {
+            sidebarDrag.current = null
+            return
+          }
+          setWidth(sidebarDrag.current.width + event.clientX - sidebarDrag.current.x)
+        }}
+        onPointerUp={() => {
+          sidebarDrag.current = null
+        }}
+        onPointerCancel={() => {
+          sidebarDrag.current = null
+        }}
+        onLostPointerCapture={() => {
+          sidebarDrag.current = null
+        }}
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+          event.preventDefault()
+          if (event.key === "Home") setWidth(MIN_SIDEBAR_WIDTH)
+          else if (event.key === "End") setWidth(MAX_SIDEBAR_WIDTH)
+          else setWidth(sidebarWidth + (event.key === "ArrowLeft" ? -16 : 16))
+        }}
+      />
     </aside>
   )
 }
@@ -352,9 +436,9 @@ function GroupNavNode({
             {label}
           </Link>
         )}
-        {!contextOnly && group.kind !== "org" && group.kind !== "team" && (
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {counts.get(group.id) ?? ""}
+        {!contextOnly && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground" aria-hidden="true">
+            {counts.get(group.id) ?? 0}
           </span>
         )}
       </div>
