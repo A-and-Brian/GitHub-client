@@ -1,5 +1,5 @@
 import type { InboxMutationResult, InboxUndoToken, PullRequest } from "@github-client/core"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useSession } from "@/app/client"
 import { isEditableTarget } from "@/app/shortcuts"
@@ -7,9 +7,18 @@ import { isEditableTarget } from "@/app/shortcuts"
 const inboxUndoToastId = (token: InboxUndoToken) => `inbox-undo-${token.id}`
 let activeMutationOwner: object | null = null
 
+type RowFocusRequest = {
+  client: ReturnType<typeof useSession>["client"]
+  login: string
+  pullId: string
+  focusAtStart: Element | null
+  focusTarget: "row" | "snoozed" | "settled"
+}
+
 export function useInboxMutations() {
   const { client, viewer } = useSession()
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
+  const [rowFocusRequest, setRowFocusRequest] = useState<RowFocusRequest | null>(null)
   const latestUndo = useRef<InboxUndoToken | null>(null)
   const mounted = useRef(false)
   const pending = useRef(new Map<number, { token: InboxUndoToken; timer: number }>())
@@ -89,25 +98,42 @@ export function useInboxMutations() {
   ) => {
     const focusAtStart = document.activeElement
     void runMutation(pull, label, mutation).then(() => {
-      requestAnimationFrame(() => {
-        if (!mounted.current || activeMutationOwner !== owner) return
-        if (
-          document.activeElement !== focusAtStart &&
-          document.activeElement !== document.body &&
-          document.activeElement !== null
-        )
-          return
-        const rowAction = document.querySelector<HTMLElement>(
-          `[data-pull-id="${CSS.escape(pull.id)}"] [aria-label^="Actions for "]`,
-        )
-        const fallback =
-          focusTarget === "row"
-            ? null
-            : document.querySelector<HTMLElement>(`[data-inbox-shelf="${focusTarget}"]`)
-        ;(rowAction ?? fallback)?.focus({ preventScroll: true })
+      if (!mounted.current || activeMutationOwner !== owner) return
+      setRowFocusRequest({
+        client,
+        login: viewer.login,
+        pullId: pull.id,
+        focusAtStart,
+        focusTarget,
       })
     })
   }
+  // Restore focus after React commits the moved row and re-enables its controls.
+  useLayoutEffect(() => {
+    if (!rowFocusRequest || busyIds.has(rowFocusRequest.pullId)) return
+    setRowFocusRequest(null)
+    if (
+      rowFocusRequest.client !== client ||
+      rowFocusRequest.login !== viewer.login ||
+      !mounted.current ||
+      activeMutationOwner !== owner
+    )
+      return
+    if (
+      document.activeElement !== rowFocusRequest.focusAtStart &&
+      document.activeElement !== document.body &&
+      document.activeElement !== null
+    )
+      return
+    const rowAction = document.querySelector<HTMLElement>(
+      `[data-pull-id="${CSS.escape(rowFocusRequest.pullId)}"] [aria-label^="Actions for "]`,
+    )
+    const fallback =
+      rowFocusRequest.focusTarget === "row"
+        ? null
+        : document.querySelector<HTMLElement>(`[data-inbox-shelf="${rowFocusRequest.focusTarget}"]`)
+    ;(rowAction ?? fallback)?.focus({ preventScroll: true })
+  }, [busyIds, client, owner, rowFocusRequest, viewer.login])
   const forgetUndo = (token: InboxUndoToken) => {
     const entry = pending.current.get(token.id)
     if (!entry) return
