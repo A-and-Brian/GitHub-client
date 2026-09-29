@@ -6,8 +6,9 @@ const row = (page: Page, id = "PR_1") => inbox(page).locator(`[data-pull-id="${i
 const active = (page: Page) => page.getByRole("list", { name: "Active pull requests", exact: true })
 const pinned = (page: Page) => page.getByRole("list", { name: "Pinned pull requests", exact: true })
 
-async function setup(page: Page) {
+async function setup(page: Page, beforeNavigate?: () => Promise<void>) {
   const requests = await fakeGitHub(page, { pullCount: 4 })
+  await beforeNavigate?.()
   await page.addInitScript(() => sessionStorage.setItem("github-client.dev-token", "ghp_test"))
   await page.goto("/#/inbox")
   await expect(row(page)).toBeVisible()
@@ -21,7 +22,12 @@ async function menuAction(page: Page, action: string, id = "PR_1") {
   await page.getByRole("menuitem", { name: action, exact: true }).click()
 }
 
-async function beginDrag(page: Page, source: Locator, target: Locator) {
+async function beginDrag(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  afterActivation?: () => Promise<void>,
+) {
   // Pointer APIs do not auto-wait for the row's async ordering/write readiness.
   const sourceRow = source.locator("xpath=ancestor-or-self::li[@data-pull-id]")
   const activator = sourceRow.getByTitle("Drag to reorder or move between sections", {
@@ -37,6 +43,7 @@ async function beginDrag(page: Page, source: Locator, target: Locator) {
   })
   await expect(page.getByRole("status", { name: "Dragging pull request" })).toBeVisible()
   await expect(target).toBeVisible()
+  await afterActivation?.()
   const to = await target.boundingBox()
   if (!to) throw new Error("Drag target is not visible after activation")
   await page.mouse.move(to.x + 24, to.y + to.height / 2, { steps: 10 })
@@ -96,6 +103,39 @@ test("dropping on Snoozed opens the picker and cancellation leaves the PR active
   await expect(row(page)).toBeVisible()
   await expect(active(page).locator('[data-pull-id="PR_1"]')).toHaveCount(0)
   await expect(page.getByRole("heading", { name: /^Snoozed/ })).toHaveCount(0)
+})
+
+test("dragging over Snoozed remeasures its target after inbox layout changes", async ({ page }) => {
+  let releaseContributions!: () => void
+  const contributionGate = new Promise<void>((resolve) => {
+    releaseContributions = resolve
+  })
+  let markContributionRequest!: () => void
+  const contributionRequested = new Promise<void>((resolve) => {
+    markContributionRequest = resolve
+  })
+
+  await setup(page, async () => {
+    await page.route("https://api.github.com/graphql", async (route) => {
+      const body = route.request().postDataJSON() as { query?: string }
+      if (body.query?.includes("query Contributions")) {
+        markContributionRequest()
+        await contributionGate
+      }
+      await route.fallback()
+    })
+  })
+  await contributionRequested
+
+  await beginDrag(page, row(page), page.getByRole("heading", { name: /^Snoozed/ }), async () => {
+    releaseContributions()
+    await expect(page.getByRole("button", { name: "View year", exact: true })).toBeVisible()
+  })
+  await page.mouse.up()
+  await expect(page.getByRole("button", { name: "In one hour", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("button", { name: "In one hour", exact: true })).toHaveCount(0)
+  await expect(active(page).locator('[data-pull-id="PR_1"]')).toBeVisible()
 })
 
 test("pin order persists and exact Undo restores a snoozed pinned PR", async ({ page }) => {
@@ -221,7 +261,7 @@ test("returning to Inbox gives the new action its own Undo lifetime", async ({ p
   await menuAction(page, "Pin")
   await expect(page.locator("[data-sonner-toast]").filter({ hasText: /^Pinned/ })).toBeVisible()
   await page.clock.fastForward(2500)
-  await page.getByRole("link", { name: "Involving me", exact: true }).click()
+  await page.getByRole("link", { name: "Home", exact: true }).click()
   await page.getByRole("link", { name: "Inbox", exact: true }).click()
   await menuAction(page, "Unpin")
   const currentNotice = page.locator("[data-sonner-toast]").filter({ hasText: /^Unpinned/ })

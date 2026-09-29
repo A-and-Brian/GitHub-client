@@ -153,7 +153,7 @@ test("startup and reload sync personal and organization feeds without fetching s
         ]),
       )
     const navigation = page.getByRole("complementary")
-    await expect(navigation.getByRole("link", { name: "Involving me", exact: true })).toBeVisible()
+    await expect(navigation.getByRole("link", { name: "Inbox", exact: true })).toBeVisible()
     await expect(navigation.getByRole("link", { name: "acme", exact: true })).toBeVisible()
     await expect(navigation.getByRole("link", { name: "Backend", exact: true })).toBeVisible()
     await expect(navigation.getByRole("link", { name: "Starred", exact: true })).toHaveCount(0)
@@ -161,7 +161,7 @@ test("startup and reload sync personal and organization feeds without fetching s
   }
 
   await expectFeeds()
-  await page.getByRole("complementary").getByRole("link", { name: "Involving me" }).click()
+  await page.getByRole("complementary").getByRole("link", { name: "Inbox" }).click()
   await expect(page.getByRole("heading", { name: "PR inbox", exact: true })).toBeVisible()
   await expect(page.getByText("Speed up the diff view", { exact: true }).first()).toBeVisible()
   requests.length = 0

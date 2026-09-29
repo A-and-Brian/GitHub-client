@@ -1,7 +1,8 @@
+import { useDndContext } from "@dnd-kit/core"
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import type { InboxPull } from "@github-client/core"
 import { Button } from "@github-client/ui/components/button"
-import { Fragment, type ReactNode } from "react"
+import { Fragment, type ReactNode, useLayoutEffect, useRef } from "react"
 import { InboxDropHeader } from "./inbox-parts"
 
 export type DropPosition = {
@@ -42,10 +43,25 @@ export function InboxSections({
   onShowMoreSettled: () => void
 }) {
   const visibleArchive = snoozedEntries.length > 0 || visibleSettledRows.length > 0
+  const primaryList = useRef<HTMLDivElement>(null)
+  const { droppableContainers, measureDroppableContainers } = useDndContext()
+
+  // Footer content can move drop targets without resizing the targets themselves.
+  useLayoutEffect(() => {
+    if (!dragging || !primaryList.current) return
+    const observer = new ResizeObserver(() => {
+      measureDroppableContainers(Array.from(droppableContainers.keys()))
+    })
+    observer.observe(primaryList.current)
+    return () => observer.disconnect()
+  }, [dragging, droppableContainers, measureDroppableContainers])
 
   return (
     <>
-      <div className="inbox-primary-list min-h-[80px] min-w-0 flex-1 overflow-y-auto">
+      <div
+        ref={primaryList}
+        className="inbox-primary-list min-h-[80px] min-w-0 flex-1 overflow-y-auto"
+      >
         {failures ? (
           <section aria-label="Failures across all states">
             <h2 className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">

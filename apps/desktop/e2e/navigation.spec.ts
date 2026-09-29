@@ -97,7 +97,7 @@ test("contributions expose dates, keyboard navigation, year view and reuse cache
     page.getByRole("group", { name: "Contributions over the last year", exact: true }),
   ).toBeVisible()
   await page.keyboard.press("Escape")
-  await page.getByRole("link", { name: "Involving me", exact: true }).click()
+  await page.getByRole("link", { name: "Home", exact: true }).click()
   await page.getByRole("link", { name: "Inbox", exact: true }).click()
   await expect(recent).toBeVisible()
   expect(

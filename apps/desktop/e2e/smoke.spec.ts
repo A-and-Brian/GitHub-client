@@ -31,7 +31,7 @@ test("sign in, see groups and pull requests, open a pull request", async ({ page
   await expect(
     page.getByRole("complementary").getByRole("link", { name: "acme", exact: true }),
   ).toBeVisible()
-  await page.getByRole("link", { name: "Involving me", exact: true }).click()
+  await page.getByRole("link", { name: "Inbox", exact: true }).click()
   await expect(page.getByText("Speed up the diff view")).toBeVisible()
 
   await page.getByLabel("Inbox scope").selectOption("involving")
