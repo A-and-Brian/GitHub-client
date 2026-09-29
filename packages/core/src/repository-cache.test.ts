@@ -45,6 +45,44 @@ const releaseKeyBase = {
   page: 1,
   pageSize: 2,
 }
+async function createResourceRows(
+  persistence?: Parameters<typeof createCollections>[0],
+  host = key.host,
+  account = key.accountLogin,
+) {
+  const collections = createCollections(persistence)
+  await collections.database.setScope(host, account)
+  return collections.repositoryResources
+}
+
+function contentFile(text: string, path = key.path) {
+  return {
+    kind: "file" as const,
+    entry: {
+      name: path.split("/").at(-1) ?? path,
+      path,
+      type: "file" as const,
+      size: text.length,
+      htmlUrl: `https://github.com/acme/api/blob/main/${path}`,
+    },
+    text,
+  }
+}
+
+const repositorySummary = {
+  nodeId: "R_api",
+  id: 12,
+  fullName: "acme/api",
+  name: "api",
+  owner: "acme",
+  ownerKind: "organization" as const,
+  description: "API",
+  private: true,
+  archived: false,
+  defaultBranch: "main",
+  htmlUrl: "https://github.com/acme/api",
+  canAdmin: true,
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: Error) => void
@@ -65,10 +103,33 @@ test("deduplicates requests and serves a fresh revisit without fetching", async 
   expect(resource.snapshot()).toMatchObject({ loaded: true, data: "saved", persisted: false })
 })
 
+test("subscribed snapshots keep the completed save result marked persisted", async () => {
+  const database = tempDatabase()
+  try {
+    const rows = await createResourceRows(database.open())
+    const cache = new RepositoryCache(rows, true)
+    const resource = cache.resource(key, async () => contentFile("saved"))
+    const unsubscribe = resource.subscribe(() => {
+      resource.snapshot()
+    })
+
+    await resource.load()
+
+    expect(resource.snapshot()).toMatchObject({
+      loaded: true,
+      data: { text: "saved" },
+      persisted: true,
+    })
+    unsubscribe()
+  } finally {
+    database.close()
+  }
+})
+
 test("a forced refresh waits for a settled response to finish persistence", async () => {
   const database = tempDatabase()
   try {
-    const rows = createCollections(database.open()).repositoryResources
+    const rows = await createResourceRows(database.open())
     const cache = new RepositoryCache(rows, true)
     const persistenceStarted = deferred<void>()
     const finishPersistence = deferred<void>()
@@ -83,7 +144,7 @@ test("a forced refresh waits for a settled response to finish persistence", asyn
       await upsert(values)
     }
     let fetchCount = 0
-    const fetcher = vi.fn(async () => `response ${++fetchCount}`)
+    const fetcher = vi.fn(async () => contentFile(`response ${++fetchCount}`))
     const resource = cache.resource(key, fetcher)
 
     const initial = resource.load()
@@ -95,7 +156,11 @@ test("a forced refresh waits for a settled response to finish persistence", asyn
     finishPersistence.resolve()
     await Promise.all([initial, refresh])
     expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(resource.snapshot()).toMatchObject({ loaded: true, data: "response 2", persisted: true })
+    expect(resource.snapshot()).toMatchObject({
+      loaded: true,
+      data: { text: "response 2" },
+      persisted: true,
+    })
   } finally {
     database.close()
   }
@@ -104,7 +169,7 @@ test("a forced refresh waits for a settled response to finish persistence", asyn
 test("a forced refresh waiting on persistence is cancelled when its account is cleared", async () => {
   const database = tempDatabase()
   try {
-    const rows = createCollections(database.open()).repositoryResources
+    const rows = await createResourceRows(database.open())
     const cache = new RepositoryCache(rows, true)
     const persistenceStarted = deferred<void>()
     const finishPersistence = deferred<void>()
@@ -114,7 +179,7 @@ test("a forced refresh waiting on persistence is cancelled when its account is c
       await finishPersistence.promise
       await upsert(values)
     }
-    const fetcher = vi.fn(async () => "saved")
+    const fetcher = vi.fn(async () => contentFile("saved"))
     const resource = cache.resource(key, fetcher)
     const initial = resource.load()
     await persistenceStarted.promise
@@ -134,13 +199,13 @@ test("a forced refresh waiting on persistence is cancelled when its account is c
 test("retry during access-denied cleanup starts after the failed request settles", async () => {
   const database = tempDatabase()
   try {
-    const rows = createCollections(database.open()).repositoryResources
+    const rows = await createResourceRows(database.open())
     const cache = new RepositoryCache(rows, true)
     let fetchCount = 0
     const fetcher = vi.fn(async () => {
       fetchCount += 1
       if (fetchCount === 2) throw new GitHubError(403, "forbidden")
-      return `response ${fetchCount}`
+      return contentFile(`response ${fetchCount}`)
     })
     const resource = cache.resource(key, fetcher)
     await resource.load()
@@ -166,7 +231,11 @@ test("retry during access-denied cleanup starts after the failed request settles
     finishRemoval.resolve()
     await Promise.all([failed, retry])
     expect(fetcher).toHaveBeenCalledTimes(3)
-    expect(resource.snapshot()).toMatchObject({ loaded: true, data: "response 3", persisted: true })
+    expect(resource.snapshot()).toMatchObject({
+      loaded: true,
+      data: { text: "response 3" },
+      persisted: true,
+    })
   } finally {
     database.close()
   }
@@ -175,15 +244,12 @@ test("retry during access-denied cleanup starts after the failed request settles
 test("rehydrates a persisted snapshot from a reopened SQLite database", async () => {
   const database = tempDatabase()
   try {
-    const first = new RepositoryCache(createCollections(database.open()).repositoryResources, true)
-    const resource = first.resource(key, async () => ({ text: "durable" }))
+    const first = new RepositoryCache(await createResourceRows(database.open()), true)
+    const resource = first.resource(key, async () => contentFile("durable"))
     await resource.load()
     expect(resource.snapshot()?.persisted).toBe(true)
 
-    const reopened = new RepositoryCache(
-      createCollections(database.open()).repositoryResources,
-      true,
-    )
+    const reopened = new RepositoryCache(await createResourceRows(database.open()), true)
     const offline = reopened.resource(key, async () => {
       throw new Error("network must not run")
     })
@@ -193,10 +259,81 @@ test("rehydrates a persisted snapshot from a reopened SQLite database", async ()
     expect(offline.snapshot()).toMatchObject({
       loaded: true,
       persisted: true,
-      data: { text: "durable" },
+      data: { kind: "file", text: "durable" },
     })
     unsubscribe()
   } finally {
+    database.close()
+  }
+})
+
+test("a failed access-time touch cannot hide a saved summary after restart", async () => {
+  vi.useFakeTimers()
+  const database = tempDatabase()
+  try {
+    const collections = createCollections(database.open())
+    await collections.database.setScope(key.host, key.accountLogin)
+    const rows = collections.repositoryResources
+    const cache = new RepositoryCache(rows, true)
+    const summaryKey = {
+      kind: "summary" as const,
+      host: key.host,
+      accountLogin: key.accountLogin,
+      owner: key.owner,
+      repo: key.repo,
+    }
+    const summary = cache.resource(summaryKey, async () => repositorySummary)
+    await summary.load()
+
+    const initialTouch = deferred<void>()
+    const touchAccess = rows.touchAccess
+    rows.touchAccess = async (updates) => {
+      await touchAccess(updates)
+      initialTouch.resolve()
+    }
+    await vi.advanceTimersByTimeAsync(1_000)
+    await initialTouch.promise
+    rows.touchAccess = touchAccess
+
+    const memberships = collections.database.table<{
+      key: string
+      scope: string
+      complete: boolean
+    }>("repositoryResourceMemberships")
+    const interrupted = deferred<void>()
+    const upsertMembership = memberships.upsert
+    let failOnce = true
+    memberships.upsert = async (values) => {
+      await upsertMembership(values)
+      if (failOnce && values.some((row) => row.key === repositoryResourceKey(summaryKey))) {
+        failOnce = false
+        interrupted.resolve()
+        throw new Error("simulated interruption after membership persisted")
+      }
+    }
+
+    await summary.load()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await interrupted.promise
+    memberships.upsert = upsertMembership
+
+    const reopenedCollections = createCollections(database.open())
+    await reopenedCollections.database.setScope(key.host, key.accountLogin)
+    const reopened = new RepositoryCache(reopenedCollections.repositoryResources, true)
+    const offlineFetcher = vi.fn(async () => {
+      throw new Error("network must not run")
+    })
+    const offline = reopened.resource(summaryKey, offlineFetcher)
+    await offline.load()
+
+    expect(offlineFetcher).not.toHaveBeenCalled()
+    expect(offline.snapshot()).toMatchObject({
+      loaded: true,
+      persisted: true,
+      data: { fullName: "acme/api" },
+    })
+  } finally {
+    vi.useRealTimers()
     database.close()
   }
 })
@@ -305,7 +442,7 @@ test("keeps stale data during refresh errors and saves resolved null and empty p
   try {
     let now = 1_000_000
     clock.mockImplementation(() => now)
-    const rows = createCollections(db.open()).repositoryResources
+    const rows = await createResourceRows(db.open())
     const cache = new RepositoryCache(rows, true)
     const fetcher = vi.fn().mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("offline"))
     const absent = cache.resource(readmeKey, fetcher)
@@ -330,7 +467,7 @@ test("keeps stale data during refresh errors and saves resolved null and empty p
       error: expect.any(Error),
     })
 
-    const reopened = new RepositoryCache(createCollections(db.open()).repositoryResources, true)
+    const reopened = new RepositoryCache(await createResourceRows(db.open()), true)
     const offlineAbsent = reopened.resource(readmeKey, async () => {
       throw new Error("network")
     })
@@ -438,7 +575,7 @@ test("a failed refresh retains the complete old range", async () => {
 test("summary denial clears its repository and ignores a late path response", async () => {
   const db = tempDatabase()
   try {
-    const rows = createCollections(db.open()).repositoryResources
+    const rows = await createResourceRows(db.open())
     const cache = new RepositoryCache(rows, true)
     const summaryKey = {
       kind: "summary" as const,
@@ -450,12 +587,12 @@ test("summary denial clears its repository and ignores a late path response", as
     let deny = false
     const summary = cache.resource(summaryKey, async () => {
       if (deny) throw new GitHubError(404, "missing")
-      return { name: "api" }
+      return repositorySummary
     })
-    const pendingPath = deferred<string>()
+    const pendingPath = deferred<ReturnType<typeof contentFile>>()
     let pathCalls = 0
     const path = cache.resource(key, () =>
-      ++pathCalls === 1 ? Promise.resolve("old") : pendingPath.promise,
+      ++pathCalls === 1 ? Promise.resolve(contentFile("old")) : pendingPath.promise,
     )
     await Promise.all([summary.load(), path.load()])
     const refreshPath = path.load({ force: true })
@@ -463,10 +600,10 @@ test("summary denial clears its repository and ignores a late path response", as
     await summary.load({ force: true })
     expect(summary.snapshot()).toMatchObject({ loaded: false, error: expect.any(GitHubError) })
     expect(path.snapshot()).toBeUndefined()
-    pendingPath.resolve("late")
+    pendingPath.resolve(contentFile("late", key.path))
     await refreshPath
     expect(rows.collection.size).toBe(0)
-    const reopened = new RepositoryCache(createCollections(db.open()).repositoryResources, true)
+    const reopened = new RepositoryCache(await createResourceRows(db.open()), true)
     const offline = reopened.resource(key, async () => {
       throw new Error("offline")
     })
@@ -501,7 +638,7 @@ test("load-more permission denial hides the old catalog while rate limits retain
 test("sign-out waits for an in-progress disk write and removes its late row", async () => {
   const db = tempDatabase()
   try {
-    const rows = createCollections(db.open()).repositoryResources
+    const rows = await createResourceRows(db.open())
     const write = rows.upsert
     const release = deferred<void>()
     let started!: () => void
@@ -514,7 +651,7 @@ test("sign-out waits for an in-progress disk write and removes its late row", as
       await write(values)
     }
     const cache = new RepositoryCache(rows, true)
-    const resource = cache.resource(key, async () => "late")
+    const resource = cache.resource(key, async () => contentFile("late"))
     const loading = resource.load()
     await writeStarted
     const clearing = cache.clearAccount("yi")
@@ -522,7 +659,7 @@ test("sign-out waits for an in-progress disk write and removes its late row", as
     release.resolve()
     await Promise.all([loading, clearing])
     expect(rows.collection.size).toBe(0)
-    const reopened = new RepositoryCache(createCollections(db.open()).repositoryResources, true)
+    const reopened = new RepositoryCache(await createResourceRows(db.open()), true)
     const offline = reopened.resource(key, async () => {
       throw new Error("offline")
     })
@@ -592,22 +729,26 @@ test("signing back into the same account does not join its old request", async (
 test("a path 404 removes only that visited path and ref", async () => {
   const db = tempDatabase()
   try {
-    const rows = createCollections(db.open()).repositoryResources
+    const rows = await createResourceRows(db.open())
     const cache = new RepositoryCache(rows, true)
     let denied = false
     const missingKey = contentKey("src/missing.ts")
     const siblingKey = contentKey("src/kept.ts")
     const missing = cache.resource(missingKey, async () => {
       if (denied) throw new GitHubError(404, "missing")
-      return "old"
+      return contentFile("old", missingKey.path)
     })
-    const sibling = cache.resource(siblingKey, async () => "kept")
+    const sibling = cache.resource(siblingKey, async () => contentFile("kept", siblingKey.path))
     await Promise.all([missing.load(), sibling.load()])
     denied = true
     await missing.load({ force: true })
     expect(missing.snapshot()).toMatchObject({ loaded: false, error: expect.any(GitHubError) })
     expect(rows.collection.has(repositoryResourceKey(missingKey))).toBe(false)
-    expect(sibling.snapshot()).toMatchObject({ loaded: true, data: "kept", persisted: true })
+    expect(sibling.snapshot()).toMatchObject({
+      loaded: true,
+      data: { text: "kept" },
+      persisted: true,
+    })
     expect(rows.collection.has(repositoryResourceKey(siblingKey))).toBe(true)
   } finally {
     db.close()
@@ -617,11 +758,17 @@ test("a path 404 removes only that visited path and ref", async () => {
 test("evicts inactive least-recently-used rows and reports unsaved oversized or failed writes", async () => {
   const db = tempDatabase()
   try {
-    const rows = createCollections(db.open()).repositoryResources
-    const cache = new RepositoryCache(rows, true, undefined, 22)
-    const first = cache.resource(contentKey("a"), async () => "123456789")
-    const second = cache.resource(contentKey("b"), async () => "123456789")
-    const third = cache.resource(contentKey("c"), async () => "123456789")
+    const rows = await createResourceRows(db.open())
+    const measurement = new RepositoryCache(rows, true)
+    await measurement
+      .resource(contentKey("measurement"), async () => contentFile("123456789"))
+      .load()
+    const entrySize = rows.storageBytes()
+    await rows.remove([repositoryResourceKey(contentKey("measurement"))])
+    const cache = new RepositoryCache(rows, true, undefined, entrySize * 2)
+    const first = cache.resource(contentKey("a"), async () => contentFile("123456789", "a"))
+    const second = cache.resource(contentKey("b"), async () => contentFile("123456789", "b"))
+    const third = cache.resource(contentKey("c"), async () => contentFile("123456789", "c"))
     const unsubscribe = first.subscribe(() => {})
     await Promise.all([first.load(), second.load()])
     await third.load()
@@ -629,7 +776,9 @@ test("evicts inactive least-recently-used rows and reports unsaved oversized or 
     expect(rows.collection.has(repositoryResourceKey(contentKey("b")))).toBe(false)
     expect(rows.collection.has(repositoryResourceKey(contentKey("c")))).toBe(true)
     expect(second.snapshot()).toMatchObject({ loaded: true, persisted: false })
-    const protectedLarge = cache.resource(contentKey("protected"), async () => "x".repeat(13))
+    const protectedLarge = cache.resource(contentKey("protected"), async () =>
+      contentFile("x".repeat(Math.floor(entrySize * 1.5)), "protected"),
+    )
     await protectedLarge.load()
     expect(protectedLarge.snapshot()).toMatchObject({
       loaded: true,
@@ -637,7 +786,9 @@ test("evicts inactive least-recently-used rows and reports unsaved oversized or 
       saveError: expect.any(Error),
     })
     expect(rows.collection.size).toBe(2)
-    const oversized = cache.resource(contentKey("d"), async () => "x".repeat(30))
+    const oversized = cache.resource(contentKey("d"), async () =>
+      contentFile("x".repeat(entrySize * 3), "d"),
+    )
     await oversized.load()
     expect(oversized.snapshot()).toMatchObject({
       loaded: true,
@@ -647,18 +798,20 @@ test("evicts inactive least-recently-used rows and reports unsaved oversized or 
     expect(rows.collection.size).toBe(2)
     unsubscribe()
 
-    const originalReplace = rows.replace
-    rows.replace = async () => {
-      throw new Error("disk full")
+    const originalUpsert = rows.upsert
+    rows.upsert = async (values) => {
+      if (values.some((row) => row.key === repositoryResourceKey(contentKey("e"))))
+        throw new Error("disk full")
+      await originalUpsert(values)
     }
-    const failed = cache.resource(contentKey("e"), async () => "123456789")
+    const failed = cache.resource(contentKey("e"), async () => contentFile("123456789", "e"))
     await failed.load()
     expect(failed.snapshot()).toMatchObject({
       loaded: true,
       persisted: false,
       saveError: expect.objectContaining({ message: "disk full" }),
     })
-    rows.replace = originalReplace
+    rows.upsert = originalUpsert
     expect(rows.collection.size).toBe(2)
   } finally {
     db.close()

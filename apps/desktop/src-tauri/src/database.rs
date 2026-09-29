@@ -4,8 +4,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_sql::{DbInstances, DbPool};
 
-const DATABASE_KEY: &str = "sqlite:github-client.sqlite";
-const DATABASE_FILENAME: &str = "github-client.sqlite";
+const DATABASE_KEY: &str = "sqlite:github-client-normalized-v1.sqlite";
+const DATABASE_FILENAME: &str = "github-client-normalized-v1.sqlite";
 
 pub(crate) async fn initialize_sqlite(
     config_dir: &Path,
@@ -177,6 +177,45 @@ mod tests {
             reopened_pool.close().await;
 
             assert!(config_dir.join(DATABASE_FILENAME).exists());
+            fs::remove_dir_all(config_dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn normalized_database_starts_empty_and_preserves_the_previous_store() {
+        tauri::async_runtime::block_on(async {
+            let config_dir = test_config_dir();
+            fs::create_dir_all(&config_dir).unwrap();
+            let old_file = config_dir.join("github-client.sqlite");
+            let old_options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&old_file)
+                .create_if_missing(true);
+            let old_pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(old_options)
+                .await
+                .unwrap();
+            execute(&old_pool, "CREATE TABLE previous_data (value TEXT)")
+                .await
+                .unwrap();
+            execute(&old_pool, "INSERT INTO previous_data VALUES ('retained')")
+                .await
+                .unwrap();
+            old_pool.close().await;
+            let previous_bytes = fs::read(&old_file).unwrap();
+
+            let instances = make_instances();
+            initialize_sqlite(&config_dir, &instances).await.unwrap();
+            let pool = get_pool(&instances).await;
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'previous_data'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 0);
+            assert_eq!(fs::read(&old_file).unwrap(), previous_bytes);
+            pool.close().await;
             fs::remove_dir_all(config_dir).unwrap();
         });
     }

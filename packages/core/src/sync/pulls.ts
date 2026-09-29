@@ -32,12 +32,13 @@ const SEARCH_PULLS = /* GraphQL */ `
           reviewDecision
           additions
           deletions
-          repository { nameWithOwner }
-          author { login avatarUrl }
-          labels(first: 10) { nodes { name color } }
+          repository { id nameWithOwner }
+          author { id login avatarUrl }
+          labels(first: 10) { pageInfo { hasNextPage } nodes { id name color } }
           comments { totalCount }
           reviewRequests(first: 10) {
-            nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } }
+            pageInfo { hasNextPage }
+            nodes { requestedReviewer { ... on User { id login } ... on Team { id combinedSlug } } }
           }
           commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
         }
@@ -59,12 +60,18 @@ export interface SearchPullNode {
   reviewDecision: ReviewDecision
   additions: number
   deletions: number
-  repository: { nameWithOwner: string }
-  author: { login: string; avatarUrl: string } | null
-  labels: { nodes: Array<{ name: string; color: string }> }
+  repository: { id?: string; nameWithOwner: string }
+  author: { id?: string; login: string; avatarUrl: string } | null
+  labels: {
+    pageInfo?: { hasNextPage: boolean }
+    nodes: Array<{ id?: string; name: string; color: string }>
+  }
   comments: { totalCount: number }
   reviewRequests: {
-    nodes: Array<{ requestedReviewer: { login?: string; combinedSlug?: string } | null }>
+    pageInfo?: { hasNextPage: boolean }
+    nodes: Array<{
+      requestedReviewer: { id?: string; login?: string; combinedSlug?: string } | null
+    }>
   }
   commits: {
     nodes: Array<{
@@ -86,10 +93,12 @@ export function toPullRequest(groupId: string, node: SearchPullNode): PullReques
     groupId,
     id: node.id,
     repo: node.repository.nameWithOwner,
+    repoNodeId: node.repository.id,
     number: node.number,
     title: node.title,
     url: node.url,
     author: node.author?.login ?? null,
+    authorNodeId: node.author?.id,
     authorAvatarUrl: node.author?.avatarUrl ?? null,
     isDraft: node.isDraft,
     createdAt: node.createdAt,
@@ -101,10 +110,30 @@ export function toPullRequest(groupId: string, node: SearchPullNode): PullReques
     baseRef: node.baseRefName,
     reviewDecision: node.reviewDecision,
     checkState: node.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
-    labels: node.labels.nodes,
+    labels: node.labels.nodes.map(({ id, name, color }) => ({ id, name, color })),
+    labelsComplete: !node.labels.pageInfo?.hasNextPage,
     reviewRequests: node.reviewRequests.nodes
       .map((n) => n.requestedReviewer?.login ?? n.requestedReviewer?.combinedSlug)
       .filter((v): v is string => Boolean(v)),
+    reviewRequestTargets: node.reviewRequests.nodes.flatMap<
+      NonNullable<PullRequest["reviewRequestTargets"]>[number]
+    >(({ requestedReviewer }) => {
+      if (!requestedReviewer) return []
+      if (requestedReviewer.login)
+        return [
+          { kind: "user" as const, login: requestedReviewer.login, nodeId: requestedReviewer.id },
+        ]
+      if (requestedReviewer.combinedSlug)
+        return [
+          {
+            kind: "team" as const,
+            login: requestedReviewer.combinedSlug,
+            nodeId: requestedReviewer.id,
+          },
+        ]
+      return []
+    }),
+    reviewRequestsComplete: !node.reviewRequests.pageInfo?.hasNextPage,
     comments: node.comments.totalCount,
     additions: node.additions,
     deletions: node.deletions,
@@ -164,7 +193,9 @@ export async function applyGroupPulls(
         ),
       )
     row.syncedAt =
-      existing && JSON.stringify(comparable(existing)) === JSON.stringify(comparable(row))
+      existing &&
+      JSON.stringify(sortedEntries(comparable(existing))) ===
+        JSON.stringify(sortedEntries(comparable(row)))
         ? existing.syncedAt
         : syncedAt
     if (existing?.state === "OPEN" && row.state === "OPEN" && existing.stateObservedAt) {
@@ -207,6 +238,10 @@ export async function applyGroupPulls(
   }
   if (complete) await pulls.replace(rows, (row) => row.groupId === group.id)
   else await pulls.upsert(rows)
+}
+
+function sortedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
+  return Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
 }
 
 /** Replaces the open PRs of one group with the current search results. */

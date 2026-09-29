@@ -6,7 +6,7 @@ import Database from "@tauri-apps/plugin-sql"
 
 export async function createTauriPlatform(): Promise<Platform> {
   await invoke("initialize_database")
-  const database = Database.get("sqlite:github-client.sqlite")
+  const database = Database.get("sqlite:github-client-normalized-v1.sqlite")
   return {
     // The Rust HTTP client has no CORS limits, which Actions log redirects need.
     fetch: fetch as typeof globalThis.fetch,

@@ -25,6 +25,8 @@ export interface SyncedCollectionOptions<T extends object, K extends Key> {
   persistence?: PersistedCollectionPersistence
   /** Bump when the row shape changes; persisted rows of older versions are dropped. */
   schemaVersion: number
+  /** Defer hydration when a shared database coordinates collection startup. */
+  startSync?: boolean
 }
 
 type Writer<T extends object, K extends Key> = Parameters<SyncConfig<T, K>["sync"]>[0]
@@ -46,7 +48,12 @@ export function createSyncedCollection<T extends object, K extends Key>(
       }
     },
   }
-  const config = { id: options.id, getKey: options.getKey, sync, startSync: true }
+  const config = {
+    id: options.id,
+    getKey: options.getKey,
+    sync,
+    startSync: options.startSync ?? true,
+  }
   const collection = (
     options.persistence
       ? (() => {

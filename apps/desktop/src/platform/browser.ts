@@ -13,7 +13,9 @@ const TOKEN_KEY = "github-client.dev-token"
 export async function createBrowserPlatform(): Promise<Platform> {
   let persistence: Platform["persistence"]
   try {
-    const database = await openBrowserWASQLiteOPFSDatabase({ databaseName: "github-client.sqlite" })
+    const database = await openBrowserWASQLiteOPFSDatabase({
+      databaseName: "github-client-normalized-v1.sqlite",
+    })
     persistence = createBrowserWASQLitePersistence({ database })
   } catch (error) {
     console.warn("OPFS SQLite unavailable; data stays in memory", error)

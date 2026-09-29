@@ -424,7 +424,8 @@ export async function fakeGitHub(
           detail.pullRequest.commits.nodes[0]!.commit.statusCheckRollup.contexts.nodes =
             options.checks.map((check, index) => ({
               __typename: "CheckRun",
-              name: check.name,
+              id: `CHECK_${index}`,
+              name: check.name ?? `check-${index}`,
               status: check.status,
               conclusion: check.conclusion,
               detailsUrl:

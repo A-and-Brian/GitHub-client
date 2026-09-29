@@ -27,7 +27,9 @@ test("repository breadcrumbs navigate home, owner, and code root while Back rest
   await expect(page).toHaveURL(/\/org\/acme.*tab=repositories/)
   await page.goBack()
   await header.getByRole("link", { name: "Home", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "Organizations and teams" })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Organizations and teams", exact: true }),
+  ).toBeVisible()
 })
 
 test("direct repository entry has a safe Back destination and a compact two-row header", async ({
@@ -72,5 +74,7 @@ test("personal owner links to its GitHub profile and direct Back falls back to H
     "https://github.com/octo",
   )
   await header.getByRole("button", { name: "Back", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "Organizations and teams" })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Organizations and teams", exact: true }),
+  ).toBeVisible()
 })

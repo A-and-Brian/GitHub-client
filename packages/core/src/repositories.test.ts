@@ -30,10 +30,14 @@ function scriptedClient(results: Response[]) {
 }
 
 const repository: RepositorySummary = {
+  nodeId: "R_kgDOExample",
   id: 12,
   fullName: "acme/api",
   name: "api",
   owner: "acme",
+  ownerNodeId: "O_kgDOExample",
+  ownerDatabaseId: 13,
+  ownerKind: "organization",
   description: "API",
   private: true,
   archived: false,
@@ -45,9 +49,15 @@ const repository: RepositorySummary = {
 function apiRepository(overrides: Record<string, unknown> = {}) {
   return {
     id: repository.id,
+    node_id: repository.nodeId,
     full_name: repository.fullName,
     name: repository.name,
-    owner: { login: repository.owner },
+    owner: {
+      login: repository.owner,
+      id: repository.ownerDatabaseId,
+      node_id: repository.ownerNodeId,
+      type: "Organization",
+    },
     description: repository.description,
     private: repository.private,
     archived: repository.archived,
@@ -102,6 +112,7 @@ test("lists releases with mapped assets, optional fields, paging, and GitHub err
     html_url: "https://github.com/acme/api/releases/tag/v1.0.0",
     assets: [
       {
+        id: 77,
         name: "client.zip",
         size: 2048,
         browser_download_url: "https://github.com/acme/api/releases/download/v1/client.zip",
@@ -139,6 +150,7 @@ test("lists releases with mapped assets, optional fields, paging, and GitHub err
         htmlUrl: "https://github.com/acme/api/releases/tag/v1.0.0",
         assets: [
           {
+            id: 77,
             name: "client.zip",
             size: 2048,
             downloadUrl: "https://github.com/acme/api/releases/download/v1/client.zip",
@@ -252,6 +264,7 @@ test("uses rendered README only after checking the size bound and returns null f
   await expect(getReadme(rest, "acme", "api", "feature/new")).resolves.toEqual({
     html: "<h1>README</h1>",
     path: "README.md",
+    size: 7,
   })
   expect(urls[0]?.searchParams.get("ref")).toBe("feature/new")
   expect(urls[1]?.searchParams.get("ref")).toBe("feature/new")

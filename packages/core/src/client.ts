@@ -1,7 +1,7 @@
 import * as reviews from "./actions/reviews"
 import * as workflows from "./actions/workflows"
 import { checkToken, TokenAuthProvider, type TokenCheck } from "./auth/auth"
-import { type Collections, createCollections } from "./collections"
+import { type Collections, createCollections, type SyncedCollection } from "./collections"
 import { Contributions } from "./contributions"
 import type { Group, MergeMethod, PullRequest, PullRequestDetail } from "./domain/types"
 import { prKey } from "./domain/types"
@@ -142,10 +142,7 @@ export class GitHubClient {
       this.confirmedPullStates.clear()
       this.notifyInboxLifecycle()
       this.activeInboxAccount = null
-      const { drafts, ...synced } = this.collections
-      await Promise.all(Object.values(synced).map((c) => c.replace([], () => true)))
-      const draftIds = [...drafts.keys()]
-      if (draftIds.length > 0) await drafts.delete(draftIds).isPersisted.promise
+      await this.collections.database.clear()
     })
   }
 
@@ -650,6 +647,31 @@ export class GitHubClient {
     if (starredPullKeys.length > 0) await pulls.remove(starredPullKeys)
   }
 
+  /** Selects the signed-in namespace before any cached view is exposed. */
+  async activateAccount(login: string): Promise<void> {
+    this.authGeneration++
+    await this.enqueueInbox(async () => {
+      this.activeInboxAccount = login.toLowerCase()
+      await this.collections.database.setScope(this.rest.url("/"), login)
+      await this.prepareSync()
+    })
+  }
+
+  private scopedWriter<T extends object, K extends string | number>(
+    source: SyncedCollection<T, K>,
+  ): SyncedCollection<T, K> {
+    const generation = this.authGeneration
+    const namespace = this.collections.database.scope
+    const current = () =>
+      generation === this.authGeneration && namespace === this.collections.database.scope
+    return {
+      collection: source.collection,
+      upsert: (rows) => (current() ? source.upsert(rows) : Promise.resolve()),
+      replace: (rows, scope) => (current() ? source.replace(rows, scope) : Promise.resolve()),
+      remove: (keys) => (current() ? source.remove(keys) : Promise.resolve()),
+    }
+  }
+
   /** Starts background sync of groups and of every group's pull requests. */
   startSync(): void {
     if (this.syncing) return
@@ -660,7 +682,11 @@ export class GitHubClient {
       idleMs: GROUPS_IDLE_MS,
       resource: "core",
       run: async () => {
-        await syncGroups(this.rest, this.collections.groups, this.collections.repos)
+        await syncGroups(
+          this.rest,
+          this.scopedWriter(this.collections.groups),
+          this.scopedWriter(this.collections.repos),
+        )
         this.registerGroupJobs()
       },
     })
@@ -803,7 +829,8 @@ export class GitHubClient {
       activeMs: ACTIVE_MS,
       idleMs: Number.POSITIVE_INFINITY,
       resource: "core",
-      run: () => syncWorkflowRuns(this.rest, repo, this.collections.workflowRuns),
+      run: () =>
+        syncWorkflowRuns(this.rest, repo, this.scopedWriter(this.collections.workflowRuns)),
     })
   }
 
@@ -813,7 +840,7 @@ export class GitHubClient {
       activeMs: ACTIVE_MS,
       idleMs: Number.POSITIVE_INFINITY,
       resource: "core",
-      run: () => syncRunJobs(this.rest, repo, runId, this.collections.jobs),
+      run: () => syncRunJobs(this.rest, repo, runId, this.scopedWriter(this.collections.jobs)),
     })
   }
 
@@ -823,7 +850,7 @@ export class GitHubClient {
       activeMs: 5 * 60_000,
       idleMs: Number.POSITIVE_INFINITY,
       resource: "core",
-      run: () => syncWorkflows(this.rest, repo, this.collections.workflows),
+      run: () => syncWorkflows(this.rest, repo, this.scopedWriter(this.collections.workflows)),
     })
   }
 
@@ -840,6 +867,7 @@ export class GitHubClient {
     event: reviews.ReviewEvent,
     body: string,
   ): Promise<void> {
+    const authGeneration = this.authGeneration
     const key = prKey(repo, number)
     const detail = this.collections.pullDetails.collection.get(key)
     if (!detail) throw new Error(`Pull request ${key} is not loaded`)
@@ -859,9 +887,12 @@ export class GitHubClient {
       body,
       comments: drafts,
     })
-    if (drafts.length > 0)
-      await this.collections.drafts.delete(drafts.map((d) => d.id)).isPersisted.promise
-    await this.refresh(jobKeys.pull(repo, number))
+    await this.enqueueInbox(async () => {
+      if (authGeneration !== this.authGeneration) return
+      if (drafts.length > 0)
+        await this.collections.drafts.delete(drafts.map((d) => d.id)).isPersisted.promise
+    })
+    if (authGeneration === this.authGeneration) await this.refresh(jobKeys.pull(repo, number))
   }
 
   addDraft(draft: Omit<reviews.DraftComment, "id" | "createdAt" | "commitId">): void {

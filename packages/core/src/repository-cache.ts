@@ -1,4 +1,4 @@
-import type { SyncedCollection } from "./collections/synced"
+import type { RepositoryResourceCollection } from "./collections/resources"
 import type { RateLimits } from "./github/rate-limit"
 import { GitHubError } from "./github/rest"
 
@@ -111,14 +111,16 @@ interface RequestToken {
 
 /** Typed, account-isolated cache for repository reads. Successful empty values are cached. */
 export class RepositoryCache {
-  private readonly rows: SyncedCollection<RepositoryResourceRow, string>
+  private readonly rows: RepositoryResourceCollection
   private readonly memory = new Map<string, RepositoryResourceSnapshot<unknown>>()
   private readonly inFlight = new Map<string, Promise<void>>()
   private readonly pageInFlight = new Map<string, Promise<void>>()
   private readonly failedMorePages = new Map<string, number>()
   private readonly listeners = new Map<string, Set<() => void>>()
   private readonly active = new Map<string, number>()
+  private readonly evicting = new Set<string>()
   private readonly generations = new Map<string, number>()
+  private readonly saveOwners = new Map<string, symbol>()
   private globalGeneration = 0
   private readonly repoGenerations = new Map<string, number>()
   private readonly resourceGenerations = new Map<string, number>()
@@ -134,7 +136,7 @@ export class RepositoryCache {
   private readonly budgetBytes: number
 
   constructor(
-    rows: SyncedCollection<RepositoryResourceRow, string>,
+    rows: RepositoryResourceCollection,
     canPersist = false,
     rateLimits?: RateLimits,
     budgetBytes = ACCOUNT_BUDGET,
@@ -143,6 +145,14 @@ export class RepositoryCache {
     this.canPersist = canPersist
     this.rateLimits = rateLimits
     this.budgetBytes = budgetBytes
+    rows.collection.subscribeChanges((changes) => {
+      const changed = new Set(changes.map((change) => String(change.key)))
+      for (const id of changed) {
+        if (!this.listeners.has(id)) continue
+        this.snapshot(id)
+        this.emit(id)
+      }
+    })
   }
 
   resource<T>(key: RepositoryResourceKey, fetcher: () => Promise<T>): RepositoryResourceHandle<T> {
@@ -158,7 +168,7 @@ export class RepositoryCache {
         lastAccessedAt: 0,
       })
     return {
-      snapshot: () => this.memory.get(id) as RepositoryResourceSnapshot<T>,
+      snapshot: () => this.snapshot<T>(id),
       subscribe: (listener) => {
         let set = this.listeners.get(id)
         if (!set) {
@@ -179,6 +189,28 @@ export class RepositoryCache {
       load: (options) => this.loadResource<T>(key, fetcher, options?.force ?? false),
       retry: () => this.loadResource<T>(key, fetcher, true),
     }
+  }
+
+  private snapshot<T>(id: string): RepositoryResourceSnapshot<T> | undefined {
+    const current = this.memory.get(id) as RepositoryResourceSnapshot<T> | undefined
+    const projected = this.rows.collection.get(id)
+    if (!current?.loaded) return current
+    if (!projected && current.persisted && !this.evicting.has(id)) {
+      const missing = {
+        ...current,
+        data: undefined,
+        loaded: false,
+        refreshing: false,
+        persisted: false,
+      }
+      this.memory.set(id, missing)
+      return missing
+    }
+    if (!projected || projected.fetchedAt < current.fetchedAt) return current
+    if (projected.data === current.data) return current
+    const next = { ...current, data: projected.data as T }
+    this.memory.set(id, next)
+    return next
   }
 
   paginated<T>(
@@ -380,6 +412,8 @@ export class RepositoryCache {
     data: T,
     token: RequestToken,
   ): Promise<void> {
+    const saveOwner = Symbol()
+    this.saveOwners.set(id, saveOwner)
     const now = Date.now()
     const snapshot: RepositoryResourceSnapshot<T> = {
       key,
@@ -394,7 +428,11 @@ export class RepositoryCache {
     this.memory.set(id, snapshot)
     this.emit(id)
     const payloadBytes = new TextEncoder().encode(JSON.stringify(data)).byteLength
-    await this.persistWithinBudget(id, key, data, snapshot, payloadBytes, token)
+    try {
+      await this.persistWithinBudget(id, key, data, snapshot, payloadBytes, token, saveOwner)
+    } finally {
+      if (this.saveOwners.get(id) === saveOwner) this.saveOwners.delete(id)
+    }
   }
 
   private async handleFailure(key: RepositoryResourceKey, error: unknown): Promise<void> {
@@ -531,11 +569,13 @@ export class RepositoryCache {
     snapshot: RepositoryResourceSnapshot<T>,
     payloadBytes: number,
     token: RequestToken,
+    saveOwner: symbol,
   ): Promise<void> {
     if (!this.canPersist) {
       this.setPersistenceState(
         id,
         snapshot,
+        saveOwner,
         false,
         new Error("Persistent local storage is unavailable on this platform."),
       )
@@ -544,55 +584,80 @@ export class RepositoryCache {
     const account = normalizeAccount(key.accountLogin)
     const write = async () => {
       if (!this.isCurrent(token)) return
-      const rows = [...this.rows.collection.values()].filter(
-        (row) => normalizeAccount(row.accountLogin) === account && row.key !== id,
-      )
-      let used = rows.reduce((sum, row) => sum + row.payloadBytes, 0)
-      const candidates = rows
-        .filter((row) => !this.active.has(row.key))
-        .sort(
-          (a, b) =>
-            (this.memory.get(a.key)?.lastAccessedAt ?? a.lastAccessedAt) -
-            (this.memory.get(b.key)?.lastAccessedAt ?? b.lastAccessedAt),
-        )
-      const evict: string[] = []
-      for (const row of candidates) {
-        if (used + payloadBytes <= this.budgetBytes) break
-        used -= row.payloadBytes
-        evict.push(row.key)
+      const previousRow = this.rows.collection.get(id)
+      const previous = previousRow
+        ? (Object.fromEntries(
+            Object.entries(previousRow).filter(([field]) => !field.startsWith("$")),
+          ) as RepositoryResourceRow)
+        : undefined
+      const row: RepositoryResourceRow = {
+        key: id,
+        accountLogin: key.accountLogin,
+        kind: key.kind,
+        identity: JSON.stringify(key),
+        data,
+        fetchedAt: snapshot.fetchedAt,
+        lastAccessedAt: snapshot.lastAccessedAt,
+        payloadBytes,
       }
-      if (payloadBytes > this.budgetBytes || used + payloadBytes > this.budgetBytes) {
-        this.setPersistenceState(
-          id,
-          snapshot,
-          false,
-          new Error(
-            "This resource is available now but could not be saved for offline use because the local cache is full.",
-          ),
-        )
-        return
+      const storageBytes = (excluded: ReadonlySet<string> = new Set()) => {
+        return this.rows.storageBytes(excluded)
       }
       try {
-        const row = {
-          key: id,
-          accountLogin: key.accountLogin,
-          kind: key.kind,
-          identity: JSON.stringify(key),
-          data,
-          fetchedAt: snapshot.fetchedAt,
-          lastAccessedAt: snapshot.lastAccessedAt,
-          payloadBytes,
-        }
-        if (evict.length) {
-          const removed = new Set(evict)
-          await this.rows.replace(
-            [...rows.filter((old) => !removed.has(old.key)), row],
-            (old) => normalizeAccount(old.accountLogin) === account,
+        await this.rows.upsert([row])
+        if (!this.rows.collection.has(id)) {
+          this.setPersistenceState(
+            id,
+            snapshot,
+            saveOwner,
+            false,
+            new Error("The active account changed before this resource could be saved."),
           )
-        } else await this.rows.upsert([row])
+          return
+        }
+        const candidates = [...this.rows.collection.values()]
+          .filter(
+            (candidate) =>
+              candidate.key !== id &&
+              normalizeAccount(candidate.accountLogin) === account &&
+              !this.active.has(candidate.key),
+          )
+          .sort(
+            (a, b) =>
+              (this.memory.get(a.key)?.lastAccessedAt ?? a.lastAccessedAt) -
+              (this.memory.get(b.key)?.lastAccessedAt ?? b.lastAccessedAt),
+          )
+        const evict = new Set<string>()
+        let used = storageBytes(evict)
+        for (const candidate of candidates) {
+          if (used <= this.budgetBytes) break
+          evict.add(candidate.key)
+          used = storageBytes(evict)
+        }
+        if (used > this.budgetBytes) {
+          if (previous) await this.rows.upsert([previous])
+          else await this.rows.remove([id])
+          this.setPersistenceState(
+            id,
+            snapshot,
+            saveOwner,
+            false,
+            new Error(
+              "This resource is available now but could not be saved for offline use because the local cache is full.",
+            ),
+          )
+          return
+        }
+        const evictedIds = [...evict]
+        for (const evictedId of evictedIds) this.evicting.add(evictedId)
+        try {
+          if (evictedIds.length) await this.rows.remove(evictedIds)
+        } finally {
+          for (const evictedId of evictedIds) this.evicting.delete(evictedId)
+        }
         if (!this.isCurrent(token)) return
-        this.setPersistenceState(id, snapshot, true)
-        for (const evictedId of evict) {
+        this.setPersistenceState(id, snapshot, saveOwner, true)
+        for (const evictedId of evictedIds) {
           const evicted = this.memory.get(evictedId)
           if (evicted)
             this.memory.set(evictedId, {
@@ -603,7 +668,7 @@ export class RepositoryCache {
           this.emit(evictedId)
         }
       } catch (error) {
-        this.setPersistenceState(id, snapshot, false, asError(error))
+        this.setPersistenceState(id, snapshot, saveOwner, false, asError(error))
       }
     }
     await this.enqueuePersist(write)
@@ -612,14 +677,15 @@ export class RepositoryCache {
   private setPersistenceState<T>(
     id: string,
     snapshot: RepositoryResourceSnapshot<T>,
+    saveOwner: symbol,
     persisted: boolean,
     saveError?: Error,
   ): void {
     const current = this.memory.get(id)
     if (
       !current?.loaded ||
-      current.fetchedAt !== snapshot.fetchedAt ||
-      current.data !== snapshot.data
+      this.saveOwners.get(id) !== saveOwner ||
+      current.fetchedAt !== snapshot.fetchedAt
     )
       return
     this.memory.set(id, { ...current, persisted, saveError })
@@ -680,23 +746,17 @@ export class RepositoryCache {
       const keys = [...this.accessQueue]
       this.accessQueue.clear()
       void this.enqueuePersist(async () => {
-        for (const id of keys) {
-          const row = this.rows.collection.get(id)
+        const updates = keys.flatMap((id) => {
           const snapshot = this.memory.get(id)
-          if (
-            !row ||
-            !snapshot?.loaded ||
-            !snapshot.persisted ||
-            row.fetchedAt !== snapshot.fetchedAt
-          )
-            continue
-          try {
-            await this.rows.upsert([
-              { ...row, lastAccessedAt: Math.max(row.lastAccessedAt, snapshot.lastAccessedAt) },
-            ])
-          } catch {
-            /* Access times are best effort. */
-          }
+          return snapshot?.loaded && snapshot.persisted
+            ? [{ key: id, fetchedAt: snapshot.fetchedAt, lastAccessedAt: snapshot.lastAccessedAt }]
+            : []
+        })
+        if (!updates.length) return
+        try {
+          await this.rows.touchAccess(updates)
+        } catch {
+          /* Access times are best effort. */
         }
       })
     }, 1000)
