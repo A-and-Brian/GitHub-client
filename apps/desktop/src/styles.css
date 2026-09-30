@@ -1,3 +1,8 @@
+/* Native app feel: no rubber-band bounce or scroll chaining in the WebView. */
+* {
+  overscroll-behavior: none;
+}
+
 /* GitHub-rendered Markdown (bodyHTML). */
 .gh-markdown {
   font-size: 0.875rem;
