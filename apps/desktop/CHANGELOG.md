@@ -1,5 +1,23 @@
 # @github-client/desktop
 
+## 0.8.0
+
+### Minor Changes
+
+- [#42](https://github.com/Yis-company/GitHub-client/pull/42) [`1697414`](https://github.com/Yis-company/GitHub-client/commit/1697414f58609e7aab5fee0b0a3cbfa9922aac22) Thanks [@ybtam](https://github.com/ybtam)! - Store GitHub entities once with explicit relationships across inbox, repository browsing, and Actions. Keep account-scoped local state and reactive views over the normalized store. Start a fresh local database; existing drafts, inbox preferences, and cached data are not imported, while credentials and app settings remain intact.
+
+### Patch Changes
+
+- [#41](https://github.com/Yis-company/GitHub-client/pull/41) [`bdcebce`](https://github.com/Yis-company/GitHub-client/commit/bdcebce690a9234e924f932c5bb7578bf5fd65f4) Thanks [@ybtam](https://github.com/ybtam)! - Compact the repository header into two rows with a back button and working Home, owner, and repository breadcrumbs.
+
+- [#43](https://github.com/Yis-company/GitHub-client/pull/43) [`8a9ae4d`](https://github.com/Yis-company/GitHub-client/commit/8a9ae4d986e3cbc3e8f393105053feaa06f79520) Thanks [@ybtam](https://github.com/ybtam)! - Disable rubber-band overscroll and scroll chaining so the app scrolls like a native window.
+
+- [#40](https://github.com/Yis-company/GitHub-client/pull/40) [`7195b30`](https://github.com/Yis-company/GitHub-client/commit/7195b306b5d2222cc3eed842b79b48966e793016) Thanks [@ybtam](https://github.com/ybtam)! - Make the main navigation sidebar resizable and show pull request counts.
+
+- [#38](https://github.com/Yis-company/GitHub-client/pull/38) [`1c13ce3`](https://github.com/Yis-company/GitHub-client/commit/1c13ce37675aaf7a5387ed538a27a242b8eb3665) Thanks [@ybtam](https://github.com/ybtam)! - Allow dragging the macOS window from blank areas across the top of the app.
+
+- [#41](https://github.com/Yis-company/GitHub-client/pull/41) [`1a391fd`](https://github.com/Yis-company/GitHub-client/commit/1a391fde169968fa40780b3d0a9673f202ad8812) Thanks [@ybtam](https://github.com/ybtam)! - Restore keyboard focus after inbox row actions once the updated row controls have rendered.
+
 ## 0.7.1
 
 ### Patch Changes
