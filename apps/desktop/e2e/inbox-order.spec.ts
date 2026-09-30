@@ -16,10 +16,15 @@ async function setup(page: Page, beforeNavigate?: () => Promise<void>) {
 }
 
 async function menuAction(page: Page, action: string, id = "PR_1") {
-  await row(page, id)
-    .getByRole("button", { name: /^Actions for/ })
+  const trigger = row(page, id).getByRole("button", { name: /^Actions for/ })
+  const menuName = await trigger.getAttribute("aria-label")
+  if (!menuName) throw new Error(`Row ${id} has no actions menu label`)
+  await trigger.click()
+  // A previous row's menu can still be mounted while its exit animation runs.
+  await page
+    .getByRole("menu", { name: menuName, exact: true })
+    .getByRole("menuitem", { name: action, exact: true })
     .click()
-  await page.getByRole("menuitem", { name: action, exact: true }).click()
 }
 
 async function beginDrag(
